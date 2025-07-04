@@ -1,9 +1,9 @@
 [package]
 name = "devefi-jes1-tcycles"
 version = "0.1.0"
-description = "Mint and convert tcycles"
+description = "Redeem tcycles for cycles"
 repository = "https://github.com/jesssekeogh/devefi_jes1_cycles"
-keywords = [ "devefi", "tcycles", "mint", "convert" ]
+keywords = [ "devefi", "tcycles", "redeem" ]
 license = ""
 
 [dependencies]
