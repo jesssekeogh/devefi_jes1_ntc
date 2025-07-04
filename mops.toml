@@ -1,9 +1,9 @@
 [package]
-name = "devefi-jes1-cycles"
+name = "devefi-jes1-tcycles"
 version = "0.1.0"
-description = "Mint and deliver cycles to your canisters"
+description = "Mint and convert tcycles"
 repository = "https://github.com/jesssekeogh/devefi_jes1_cycles"
-keywords = [ "devefi", "cycles", "mint", "tcycles" ]
+keywords = [ "devefi", "tcycles", "mint", "convert" ]
 license = ""
 
 [dependencies]

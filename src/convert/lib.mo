@@ -4,8 +4,8 @@ import Map "mo:map/Map";
 import Principal "mo:base/Principal";
 import Option "mo:base/Option";
 import Core "mo:devefi/core";
-import Ver1 "./memory/v1";
-import I "./interface";
+import Ver1 "../convert/memory/v1";
+import I "../convert/interface";
 
 module {
     let T = Core.VectorModule;
@@ -20,7 +20,7 @@ module {
 
     let M = Mem.Vector.V1;
 
-    public let ID = "devefi_jes1_cycles";
+    public let ID = "devefi_jes1_tcyclesconvert";
 
     public class Mod({
         xmem : MU.MemShell<M.Mem>;
@@ -29,19 +29,19 @@ module {
 
         let mem = MU.access(xmem);
 
-        public type CyclesNodeMem = Ver1.CyclesNodeMem;
+        public type ConvertNodeMem = Ver1.ConvertNodeMem;
 
         public func meta() : T.Meta {
             {
                 id = ID; // This has to be same as the variant in vec.custom
-                name = "Cycles";
+                name = "Convert TCYCLES";
                 author = "jes1";
-                description = "Mint and deliver cycles to your canisters";
-                supported_ledgers = []; // all pylon ledgers
+                description = "Converts TCYCLES to CYCLES";
+                supported_ledgers = [#ic(Principal.fromText("um5iw-rqaaa-aaaaq-qaaba-cai"))]; // tcycles ledger
                 version = #beta([0, 1, 0]);
                 create_allowed = true;
                 ledger_slots = [
-                    "Cycles"
+                    "TCYCLES"
                 ];
                 billing = []; // TBD
                 sources = sources(0);
@@ -78,13 +78,15 @@ module {
         // };
 
         module Run {
-            public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : CyclesNodeMem) : () {};
+            public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : ConvertNodeMem) : () {
+                // need to make sure is only a principal to receive the cycles
+            };
 
-            public func singleAsync(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : CyclesNodeMem) : async* () {};
+            public func singleAsync(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : ConvertNodeMem) : async* () {};
         };
 
         public func create(vid : T.NodeId, _req : T.CommonCreateRequest, t : I.CreateRequest) : T.Create {
-            let nodeMem : CyclesNodeMem = {
+            let nodeMem : ConvertNodeMem = {
                 variables = {};
             };
             ignore Map.put(mem.main, Map.n32hash, vid, nodeMem);
@@ -120,11 +122,11 @@ module {
         };
 
         public func sources(_id : T.NodeId) : T.Endpoints {
-            [(0, "Stake"), (0, "_Maturity")];
+            [(0, "Convert")];
         };
 
         public func destinations(_id : T.NodeId) : T.Endpoints {
-            [(0, "Maturity"), (0, "Disburse")];
+            [(0, "Deposit")];
         };
 
     };
