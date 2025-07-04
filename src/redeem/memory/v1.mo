@@ -12,7 +12,7 @@ module {
     });
 
     public type RedeemNodeMem = {
-        variables : {};
+        variables : {}; // allow to set minimum redeem amount
         internals : {
             var updating : UpdatingStatus;
         };

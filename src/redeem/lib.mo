@@ -1,14 +1,14 @@
 import U "mo:devefi/utils";
 import MU "mo:mosup";
 import Map "mo:map/Map";
-import CyclesLedgerInterface "../interfaces/cycles_ledger";
 import Principal "mo:base/Principal";
 import Error "mo:base/Error";
 import Option "mo:base/Option";
 import Buffer "mo:base/Buffer";
 import Core "mo:devefi/core";
-import Ver1 "./memory/v1";
-import I "./interface";
+import Ver1 "../redeem/memory/v1";
+import I "../redeem/interface";
+import CyclesLedgerInterface "../interfaces/cycles_ledger";
 
 module {
     let T = Core.VectorModule;
@@ -42,6 +42,9 @@ module {
         // Maximum number of activities to keep in the main neuron's activity log
         let ACTIVITY_LOG_LIMIT : Nat = 10;
 
+        // flat fee multiplier for billing
+        let BILLING_FLAT_FEE_MULTIPLIER : Nat = 100;
+
         public func meta() : T.Meta {
             {
                 id = ID; // This has to be same as the variant in vec.custom
@@ -57,7 +60,7 @@ module {
                 billing = [
                     {
                         cost_per_day = 0;
-                        transaction_fee = #flat_fee_multiplier(100);
+                        transaction_fee = #flat_fee_multiplier(BILLING_FLAT_FEE_MULTIPLIER);
                     },
                 ];
                 sources = sources(0);
@@ -84,22 +87,6 @@ module {
         };
 
         module Run {
-            public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : RedeemNodeMem) : () {
-                let ?sourceDeposit = core.getSource(vid, vec, 0) else return;
-                let depositBal = core.Source.balance(sourceDeposit);
-                let depositFee = core.Source.fee(sourceDeposit) * 1000; // still a fraction of a USD
-
-                if (depositBal > depositFee) {
-                    let #ok(intent) = core.Source.Send.intent(
-                        sourceDeposit,
-                        #remote_destination({ node = vid; port = 1 }), // ensures fee is withdrawn
-                        depositBal,
-                    ) else return;
-
-                    ignore core.Source.Send.commit(intent);
-                };
-            };
-
             public func singleAsync(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : RedeemNodeMem) : async* () {
                 try {
                     await* CycleLedgerActions.redeem_tcycles(nodeMem, vid, vec);
@@ -156,7 +143,7 @@ module {
         };
 
         public func sources(_id : T.NodeId) : T.Endpoints {
-            [(0, "Deposit"), (0, "Redeem")];
+            [(0, "Redeem")];
         };
 
         public func destinations(_id : T.NodeId) : T.Endpoints {
@@ -210,16 +197,37 @@ module {
 
         module CycleLedgerActions {
             public func redeem_tcycles(nodeMem : RedeemNodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
-                let ?sourceRedeem = core.getSource(vid, vec, 1) else return;
-                let ?sourceRedeemAccount = core.getSourceAccountIC(vec, 1) else return;
+                let ?sourceRedeem = core.getSource(vid, vec, 0) else return;
+                let ?sourceRedeemAccount = core.getSourceAccountIC(vec, 0) else return;
                 let redeemBal = core.Source.balance(sourceRedeem);
                 let redeemFee = core.Source.fee(sourceRedeem);
 
-                if (redeemBal > redeemFee * 2) {
+                if (redeemBal > redeemFee * 1000) {
                     let ?{ owner; subaccount } = core.getDestinationAccountIC(vec, 0) else return;
                     if (Option.isSome(subaccount)) return; // can't send cycles to subaccounts
 
-                    switch (await CyclesLedger.withdraw({ to = owner; from_subaccount = sourceRedeemAccount.subaccount; created_at_time = null; amount = redeemBal - redeemFee })) {
+                    // process billing fee
+                    let billingFee = redeemFee * BILLING_FLAT_FEE_MULTIPLIER;
+                    let fee_subaccount = ?U.port2subaccount({
+                        vid = vid;
+                        flow = #fee;
+                        id = 0;
+                    });
+
+                    let #ok(intent) = core.Source.Send.intent(
+                        sourceRedeem,
+                        #external_account({
+                            owner = core.getThisCan();
+                            subaccount = fee_subaccount;
+                        }),
+                        billingFee,
+                    ) else return;
+
+                    ignore core.Source.Send.commit(intent);
+
+                    let amount_to_withdraw = redeemBal - (billingFee + redeemFee) : Nat;
+
+                    switch (await CyclesLedger.withdraw({ to = owner; from_subaccount = sourceRedeemAccount.subaccount; created_at_time = null; amount = amount_to_withdraw })) {
                         case (#Ok(_)) {
                             NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Ok());
                         };
@@ -230,6 +238,5 @@ module {
                 };
             };
         };
-
     };
 };
