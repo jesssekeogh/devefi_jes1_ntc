@@ -1,0 +1,13 @@
+[package]
+name = "devefi-jes1-cycles"
+version = "0.1.0"
+description = "Mint and deliver cycles to your canisters"
+repository = "https://github.com/jesssekeogh/devefi_jes1_cycles"
+keywords = [ "devefi", "cycles", "mint", "tcycles" ]
+license = ""
+
+[dependencies]
+base = "0.14.11"
+
+[dev-dependencies]
+devefi = "0.4.0"

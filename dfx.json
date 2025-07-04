@@ -1,14 +1,34 @@
 {
   "canisters": {
-    "devefi_jes1_cycles_backend": {
-      "main": "src/devefi_jes1_cycles_backend/main.mo",
-      "type": "motoko"
+    "cycles_test_pylon": {
+      "main": "tests/pylon/main.mo",
+      "type": "motoko",
+      "gzip": true,
+      "declarations": {
+        "node_compatibility": true,
+        "output": "tests/pic/setup/cycles_test_pylon/declarations"
+      },
+      "post_install": [
+        "cp .dfx/ic/canisters/cycles_test_pylon/cycles_test_pylon.wasm.gz tests/pic/setup/cycles_test_pylon"
+      ]
+    },
+    "router": {
+      "main": "tests/router/main.mo",
+      "type": "motoko",
+      "gzip": true,
+      "declarations": {
+        "node_compatibility": true,
+        "output": "tests/pic/setup/router/declarations"
+      },
+      "post_install": [
+        "cp .dfx/ic/canisters/router/router.wasm.gz tests/pic/setup/router"
+      ]
     }
   },
   "defaults": {
     "build": {
       "args": "",
-      "packtool": ""
+      "packtool": "mops sources"
     }
   },
   "output_env_file": ".env",
