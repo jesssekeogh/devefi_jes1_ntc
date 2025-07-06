@@ -4,15 +4,15 @@ import MU "mo:mosup";
 module {
 
     public type Mem = {
-        main : Map.Map<Nat32, RedeemNodeMem>;
+        main : Map.Map<Nat32, NodeMem>;
     };
 
     public func new() : MU.MemShell<Mem> = MU.new<Mem>({
-        main = Map.new<Nat32, RedeemNodeMem>();
+        main = Map.new<Nat32, NodeMem>();
     });
 
-    public type RedeemNodeMem = {
-        variables : {}; // allow to set minimum redeem amount
+    public type NodeMem = {
+        variables : {}; // allow to set minimum amount
         internals : {
             var updating : UpdatingStatus;
         };

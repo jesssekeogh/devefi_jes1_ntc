@@ -4,11 +4,11 @@ import Map "mo:map/Map";
 import Principal "mo:base/Principal";
 import Error "mo:base/Error";
 import Option "mo:base/Option";
-import Buffer "mo:base/Buffer";
 import Core "mo:devefi/core";
-import Ver1 "../redeem/memory/v1";
-import I "../redeem/interface";
-import CyclesLedgerInterface "../interfaces/cycles_ledger";
+import Ver1 "./memory/v1";
+import I "./interface";
+import CyclesLedgerInterface "./interfaces/cycles_ledger";
+import NodeUtils "./utils/node";
 
 module {
     let T = Core.VectorModule;
@@ -32,18 +32,9 @@ module {
 
         let mem = MU.access(xmem);
 
-        public type RedeemNodeMem = Ver1.RedeemNodeMem;
+        public type NodeMem = Ver1.NodeMem;
 
         let CyclesLedger = actor ("um5iw-rqaaa-aaaaq-qaaba-cai") : CyclesLedgerInterface.Self;
-
-        // Timeout interval for when calling async
-        let TIMEOUT_NANOS : Nat64 = (3 * 60 * 1_000_000_000); // every 3 minutes
-
-        // Maximum number of activities to keep in the main neuron's activity log
-        let ACTIVITY_LOG_LIMIT : Nat = 10;
-
-        // flat fee multiplier for billing
-        let BILLING_FLAT_FEE_MULTIPLIER : Nat = 100;
 
         public func meta() : T.Meta {
             {
@@ -57,12 +48,7 @@ module {
                 ledger_slots = [
                     "TCYCLES"
                 ];
-                billing = [
-                    {
-                        cost_per_day = 0;
-                        transaction_fee = #flat_fee_multiplier(BILLING_FLAT_FEE_MULTIPLIER);
-                    },
-                ];
+                billing = [];
                 sources = sources(0);
                 destinations = destinations(0);
                 author_account = {
@@ -87,7 +73,7 @@ module {
         };
 
         module Run {
-            public func singleAsync(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : RedeemNodeMem) : async* () {
+            public func singleAsync(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : async* () {
                 try {
                     await* CycleLedgerActions.redeem_tcycles(nodeMem, vid, vec);
                 } catch (err) {
@@ -99,7 +85,7 @@ module {
         };
 
         public func create(vid : T.NodeId, _req : T.CommonCreateRequest, t : I.CreateRequest) : T.Create {
-            let nodeMem : RedeemNodeMem = {
+            let nodeMem : NodeMem = {
                 variables = {};
                 internals = {
                     var updating = #Init;
@@ -150,53 +136,8 @@ module {
             [(0, "Canister")];
         };
 
-        module NodeUtils {
-            public func node_ready(nodeMem : RedeemNodeMem) : Bool {
-                // Determine the appropriate timeout based on whether the neuron should be refreshed
-                let timeout = TIMEOUT_NANOS;
-
-                switch (nodeMem.internals.updating) {
-                    case (#Init) {
-                        nodeMem.internals.updating := #Calling(U.now());
-                        return true;
-                    };
-                    case (#Calling(ts) or #Done(ts)) {
-                        if (U.now() >= ts + timeout) {
-                            nodeMem.internals.updating := #Calling(U.now());
-                            return true;
-                        } else {
-                            return false;
-                        };
-                    };
-                };
-            };
-
-            public func node_done(nodeMem : RedeemNodeMem) : () {
-                nodeMem.internals.updating := #Done(U.now());
-            };
-
-            public func log_activity(nodeMem : RedeemNodeMem, operation : Text, result : { #Ok; #Err : Text }) : () {
-                let log = Buffer.fromArray<Ver1.Activity>(nodeMem.log);
-
-                switch (result) {
-                    case (#Ok(())) {
-                        log.add(#Ok({ operation = operation; timestamp = U.now() }));
-                    };
-                    case (#Err(msg)) {
-                        log.add(#Err({ operation = operation; msg = msg; timestamp = U.now() }));
-                    };
-                };
-
-                if (log.size() > ACTIVITY_LOG_LIMIT) {
-                    ignore log.remove(0); // remove 1 item from the beginning
-                };
-
-                nodeMem.log := Buffer.toArray(log);
-            };
-        };
-
         module CycleLedgerActions {
-            public func redeem_tcycles(nodeMem : RedeemNodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
+            public func redeem_tcycles(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
                 let ?sourceRedeem = core.getSource(vid, vec, 0) else return;
                 let ?sourceRedeemAccount = core.getSourceAccountIC(vec, 0) else return;
                 let redeemBal = core.Source.balance(sourceRedeem);
@@ -206,26 +147,8 @@ module {
                     let ?{ owner; subaccount } = core.getDestinationAccountIC(vec, 0) else return;
                     if (Option.isSome(subaccount)) return; // can't send cycles to subaccounts
 
-                    // process billing fee
-                    let billingFee = redeemFee * BILLING_FLAT_FEE_MULTIPLIER;
-                    let fee_subaccount = ?U.port2subaccount({
-                        vid = vid;
-                        flow = #fee;
-                        id = 0;
-                    });
 
-                    let #ok(intent) = core.Source.Send.intent(
-                        sourceRedeem,
-                        #external_account({
-                            owner = core.getThisCan();
-                            subaccount = fee_subaccount;
-                        }),
-                        billingFee,
-                    ) else return;
-
-                    ignore core.Source.Send.commit(intent);
-
-                    let amount_to_withdraw = redeemBal - (billingFee + redeemFee) : Nat;
+                    let amount_to_withdraw : Nat = redeemBal - redeemFee;
 
                     switch (await CyclesLedger.withdraw({ to = owner; from_subaccount = sourceRedeemAccount.subaccount; created_at_time = null; amount = amount_to_withdraw })) {
                         case (#Ok(_)) {
