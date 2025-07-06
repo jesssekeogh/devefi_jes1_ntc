@@ -83,7 +83,12 @@ module {
                 if (not vec.active) continue vec_loop;
                 if (vec.billing.frozen) continue vec_loop;
                 if (Option.isSome(vec.billing.expires)) continue vec_loop;
-                if (NodeUtils.node_ready(nodeMem)) {
+
+                let ?sourceMint = core.getSource(vid, vec, 0) else continue vec_loop;
+                let mintBal = core.Source.balance(sourceMint);
+                let mintFee = core.Source.fee(sourceMint);
+
+                if (NodeUtils.node_ready(nodeMem, mintBal, mintFee + MINIMUM_MINT)) {
                     await* Run.singleAsync(vid, vec, nodeMem);
                     return; // return after finding the first ready node
                 };
@@ -120,10 +125,7 @@ module {
 
         public func create(vid : T.NodeId, _req : T.CommonCreateRequest, t : I.CreateRequest) : T.Create {
             let nodeMem : NodeMem = {
-                variables = {};
-                internals = {
-                    var updating = #Init;
-                };
+                internals = { var updating = #Init };
                 var log = [];
             };
             ignore Map.put(mem.main, Map.n32hash, vid, nodeMem);
@@ -131,7 +133,7 @@ module {
         };
 
         public func delete(vid : T.NodeId) : T.Delete {
-            let ?t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
+            let ?_t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
 
             ignore Map.remove(mem.main, Map.n32hash, vid);
             return #ok();
@@ -139,7 +141,7 @@ module {
         };
 
         public func modify(vid : T.NodeId, m : I.ModifyRequest) : T.Modify {
-            let ?t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
+            let ?_t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
 
             #ok();
         };
@@ -148,7 +150,6 @@ module {
             let ?t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
 
             #ok {
-                variables = {};
                 internals = {
                     updating = t.internals.updating;
                 };
@@ -156,11 +157,7 @@ module {
             };
         };
 
-        public func defaults() : I.CreateRequest {
-            {
-                variables = {};
-            };
-        };
+        public func defaults() : I.CreateRequest { {} };
 
         public func sources(_id : T.NodeId) : T.Endpoints {
             [(0, "Mint"), (1, "_To")];
@@ -177,25 +174,23 @@ module {
                 let mintBal = core.Source.balance(sourceMint);
                 let mintFee = core.Source.fee(sourceMint);
 
-                if (mintBal > mintFee + MINIMUM_MINT) {
-                    let ?sourceToAccount = core.getSourceAccountIC(vec, 1) else return;
+                let ?sourceToAccount = core.getSourceAccountIC(vec, 1) else return;
 
-                    let amount_to_mint : Nat = mintBal - mintFee;
+                let amount_to_mint : Nat = mintBal - mintFee;
 
-                    switch (await IcpLedger.icrc1_transfer({ to = { owner = Principal.fromActor(CyclesMinting); subaccount = ?Principal.toBlob(core.getThisCan()) }; fee = null; memo = ?NOTIFY_MINT_CYCLES; from_subaccount = sourceMintAccount.subaccount; created_at_time = null; amount = amount_to_mint })) {
-                        case (#Ok(block_idx)) {
-                            switch (await CyclesMinting.notify_mint_cycles({ block_index = Nat64.fromNat(block_idx); deposit_memo = ?NOTIFY_MINT_CYCLES; to_subaccount = sourceToAccount.subaccount })) {
-                                case (#Ok(_)) {
-                                    NodeUtils.log_activity(nodeMem, "mint_tcycles", #Ok());
-                                };
-                                case (#Err(err)) {
-                                    NodeUtils.log_activity(nodeMem, "mint_tcycles", #Err(debug_show err));
-                                };
+                switch (await IcpLedger.icrc1_transfer({ to = { owner = Principal.fromActor(CyclesMinting); subaccount = ?Principal.toBlob(core.getThisCan()) }; fee = null; memo = ?NOTIFY_MINT_CYCLES; from_subaccount = sourceMintAccount.subaccount; created_at_time = null; amount = amount_to_mint })) {
+                    case (#Ok(block_idx)) {
+                        switch (await CyclesMinting.notify_mint_cycles({ block_index = Nat64.fromNat(block_idx); deposit_memo = ?NOTIFY_MINT_CYCLES; to_subaccount = sourceToAccount.subaccount })) {
+                            case (#Ok(_)) {
+                                NodeUtils.log_activity(nodeMem, "mint_tcycles", #Ok());
+                            };
+                            case (#Err(err)) {
+                                NodeUtils.log_activity(nodeMem, "mint_tcycles", #Err(debug_show err));
                             };
                         };
-                        case (#Err(err)) {
-                            NodeUtils.log_activity(nodeMem, "mint_tcycles", #Err(debug_show err));
-                        };
+                    };
+                    case (#Err(err)) {
+                        NodeUtils.log_activity(nodeMem, "mint_tcycles", #Err(debug_show err));
                     };
                 };
             };

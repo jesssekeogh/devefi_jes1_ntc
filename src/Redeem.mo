@@ -1,4 +1,3 @@
-import U "mo:devefi/utils";
 import MU "mo:mosup";
 import Map "mo:map/Map";
 import Principal "mo:base/Principal";
@@ -65,7 +64,12 @@ module {
                 if (not vec.active) continue vec_loop;
                 if (vec.billing.frozen) continue vec_loop;
                 if (Option.isSome(vec.billing.expires)) continue vec_loop;
-                if (NodeUtils.node_ready(nodeMem)) {
+
+                let ?sourceRedeem = core.getSource(vid, vec, 0) else return;
+                let redeemBal = core.Source.balance(sourceRedeem);
+                let redeemFee = core.Source.fee(sourceRedeem);
+
+                if (NodeUtils.node_ready(nodeMem, redeemBal, redeemFee * 1000)) {
                     await* Run.singleAsync(vid, vec, nodeMem);
                     return; // return after finding the first ready node
                 };
@@ -86,7 +90,6 @@ module {
 
         public func create(vid : T.NodeId, _req : T.CommonCreateRequest, t : I.CreateRequest) : T.Create {
             let nodeMem : NodeMem = {
-                variables = {};
                 internals = {
                     var updating = #Init;
                 };
@@ -97,7 +100,7 @@ module {
         };
 
         public func delete(vid : T.NodeId) : T.Delete {
-            let ?t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
+            let ?_t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
 
             ignore Map.remove(mem.main, Map.n32hash, vid);
             return #ok();
@@ -105,7 +108,7 @@ module {
         };
 
         public func modify(vid : T.NodeId, m : I.ModifyRequest) : T.Modify {
-            let ?t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
+            let ?_t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
 
             #ok();
         };
@@ -114,7 +117,6 @@ module {
             let ?t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
 
             #ok {
-                variables = {};
                 internals = {
                     updating = t.internals.updating;
                 };
@@ -122,11 +124,7 @@ module {
             };
         };
 
-        public func defaults() : I.CreateRequest {
-            {
-                variables = {};
-            };
-        };
+        public func defaults() : I.CreateRequest { {} };
 
         public func sources(_id : T.NodeId) : T.Endpoints {
             [(0, "Redeem")];
@@ -143,22 +141,20 @@ module {
                 let redeemBal = core.Source.balance(sourceRedeem);
                 let redeemFee = core.Source.fee(sourceRedeem);
 
-                if (redeemBal > redeemFee * 1000) {
-                    let ?{ owner; subaccount } = core.getDestinationAccountIC(vec, 0) else return;
-                    if (Option.isSome(subaccount)) return; // can't send cycles to subaccounts
+                let ?{ owner; subaccount } = core.getDestinationAccountIC(vec, 0) else return;
+                if (Option.isSome(subaccount)) return; // can't send cycles to subaccounts
 
+                let amount_to_withdraw : Nat = redeemBal - redeemFee;
 
-                    let amount_to_withdraw : Nat = redeemBal - redeemFee;
-
-                    switch (await CyclesLedger.withdraw({ to = owner; from_subaccount = sourceRedeemAccount.subaccount; created_at_time = null; amount = amount_to_withdraw })) {
-                        case (#Ok(_)) {
-                            NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Ok());
-                        };
-                        case (#Err(err)) {
-                            NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Err(debug_show err));
-                        };
+                switch (await CyclesLedger.withdraw({ to = owner; from_subaccount = sourceRedeemAccount.subaccount; created_at_time = null; amount = amount_to_withdraw })) {
+                    case (#Ok(_)) {
+                        NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Ok());
+                    };
+                    case (#Err(err)) {
+                        NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Err(debug_show err));
                     };
                 };
+
             };
         };
     };

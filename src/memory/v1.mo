@@ -12,7 +12,6 @@ module {
     });
 
     public type NodeMem = {
-        variables : {}; // allow to set minimum amount
         internals : {
             var updating : UpdatingStatus;
         };

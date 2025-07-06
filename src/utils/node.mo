@@ -4,23 +4,20 @@ import Buffer "mo:base/Buffer";
 
 module NodeUtils {
 
-    public func node_ready(nodeMem : Ver1.NodeMem) : Bool {
+    public func node_ready(nodeMem : Ver1.NodeMem, sourceBal : Nat, minimumNeeded : Nat) : Bool {
         let timeout : Nat64 = (3 * 60 * 1_000_000_000);
 
         switch (nodeMem.internals.updating) {
             case (#Init) {
-                // Initial state, ready to start processing
+                if (sourceBal < minimumNeeded) return false;
                 nodeMem.internals.updating := #Calling(U.now());
                 return true;
             };
             case (#Calling(_)) {
-                // If in Calling state, don't restart even if timeout has passed
-                // This indicates an operation is still in progress, and we need to wait for results
-                return false;
+                return false; // If already in Calling state, do not proceed
             };
             case (#Done(ts)) {
-                // If in Done state and timeout has passed, ready for next operation
-                if (U.now() >= ts + timeout) {
+                if (U.now() >= ts + timeout and sourceBal > minimumNeeded) {
                     nodeMem.internals.updating := #Calling(U.now());
                     return true;
                 } else {
