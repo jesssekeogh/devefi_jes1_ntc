@@ -33,11 +33,16 @@ module {
 
         public type NodeMem = Ver1.NodeMem;
 
-        let CyclesLedger = actor ("um5iw-rqaaa-aaaaq-qaaba-cai") : CyclesLedgerInterface.Self;
+        // let CyclesLedger = actor ("um5iw-rqaaa-aaaaq-qaaba-cai") : CyclesLedgerInterface.Self;
+
+        // TESTING ENVIRONMENT: Using a mock/test Cycles Ledger canister
+        // This is a temporary test canister ID for development purposes
+        // Replace before deploying to production environment
+        let CyclesLedger = actor ("7tjcv-pp777-77776-qaaaa-cai") : CyclesLedgerInterface.Self;
 
         public func meta() : T.Meta {
             {
-                id = ID; // This has to be same as the variant in vec.custom
+                id = ID;
                 name = "Redeem TCYCLES";
                 author = "jes1";
                 description = "Redeem TCYCLES for CYCLES";

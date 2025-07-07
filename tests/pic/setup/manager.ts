@@ -1,0 +1,482 @@
+import {
+  _SERVICE as TCYCLESTESTPYLON,
+  CreateRequest,
+  CommonCreateRequest,
+  NodeShared,
+  LocalNodeId as NodeId,
+  GetNodeResponse,
+  CreateNodeRequest,
+  Shared__1,
+} from "./tcycles_test_pylon/declarations/tcycles_test_pylon.did.js";
+import { _SERVICE as CYCLESLEDGER } from "./cyclesledger/declarations/cycles_ledger.js";
+import {
+  _SERVICE as ICRCLEDGER,
+  Account,
+  TransferResult,
+} from "./icrcledger/declarations/icrcledger.idl.js";
+import {
+  _SERVICE as ICPLEDGER,
+  idlFactory as ledgerIdlFactory,
+} from "./nns/ledger";
+import { Actor, PocketIc, createIdentity, SubnetStateType } from "@dfinity/pic";
+import { Principal } from "@dfinity/principal";
+import {
+  ICP_LEDGER_CANISTER_ID,
+  CYCLES_LEDGER_CANISTER_ID,
+} from "./constants.ts";
+import { TcyclesTestPylon, ICRCLedger } from "./index";
+import { minterIdentity } from "./nns/identity.ts";
+import { NNS_STATE_PATH } from "./constants.ts";
+import Router from "./router/router.ts";
+import CyclesLedger from "./cyclesledger/cycles_ledger.ts";
+import { match, P } from "ts-pattern";
+
+export class Manager {
+  private readonly me: ReturnType<typeof createIdentity>;
+  private readonly pic: PocketIc;
+  private readonly tcyclesTestPylon: Actor<TCYCLESTESTPYLON>;
+  private readonly icrcActor: Actor<ICRCLEDGER>;
+  private readonly icpLedgerActor: Actor<ICPLEDGER>;
+  private readonly cyclesLedgerActor: Actor<CYCLESLEDGER>;
+  private readonly testCanisterId: Principal;
+
+  constructor(
+    pic: PocketIc,
+    me: ReturnType<typeof createIdentity>,
+    tcyclesTestPylon: Actor<TCYCLESTESTPYLON>,
+    icrcActor: Actor<ICRCLEDGER>,
+    icpLedgerActor: Actor<ICPLEDGER>,
+    cyclesLedgerActor: Actor<CYCLESLEDGER>,
+    testCanisterId: Principal
+  ) {
+    this.pic = pic;
+    this.me = me;
+    this.tcyclesTestPylon = tcyclesTestPylon;
+    this.icrcActor = icrcActor;
+    this.icpLedgerActor = icpLedgerActor;
+    this.cyclesLedgerActor = cyclesLedgerActor;
+    this.testCanisterId = testCanisterId;
+
+    // set identitys as me
+    this.tcyclesTestPylon.setIdentity(this.me);
+    this.icrcActor.setIdentity(this.me);
+    this.icpLedgerActor.setIdentity(this.me);
+    this.cyclesLedgerActor.setIdentity(this.me);
+  }
+
+  public static async beforeAll(): Promise<Manager> {
+    let pic = await PocketIc.create(process.env.PIC_URL, {
+      nns: {
+        state: {
+          type: SubnetStateType.FromPath,
+          path: NNS_STATE_PATH,
+        },
+      },
+      system: [{ state: { type: SubnetStateType.New } }],
+      application: [{ state: { type: SubnetStateType.New } }],
+    });
+
+    await pic.setTime(new Date().getTime());
+    await pic.tick();
+
+    let identity = createIdentity("superSecretAlicePassword");
+
+    // setup ICRC
+    let icrcFixture = await ICRCLedger(pic, identity.getPrincipal());
+
+    // setup chrono router
+    // we are not testing the router here, but we need it to spin up a pylon
+    // pass time to allow router to setup slices
+    await Router(pic);
+    await pic.advanceTime(240 * 60 * 1000);
+    await pic.tick(240);
+
+    let cyclesLedgerFixture = await CyclesLedger(pic);
+
+    // setup vector
+    let pylonFixture = await TcyclesTestPylon(pic);
+
+    let testCanister = await pic.createCanister();
+
+    // setup icp ledger
+    let icpLedgerActor = pic.createActor<ICPLEDGER>(
+      ledgerIdlFactory,
+      ICP_LEDGER_CANISTER_ID
+    );
+
+    // set identity as minter
+    icpLedgerActor.setIdentity(minterIdentity);
+
+    // mint ICP tokens
+    await icpLedgerActor.icrc1_transfer({
+      from_subaccount: [],
+      to: { owner: identity.getPrincipal(), subaccount: [] },
+      amount: 100000000000n,
+      fee: [],
+      memo: [],
+      created_at_time: [],
+    });
+
+    return new Manager(
+      pic,
+      identity,
+      pylonFixture.actor,
+      icrcFixture.actor,
+      icpLedgerActor,
+      cyclesLedgerFixture.actor,
+      testCanister
+    );
+  }
+
+  public async afterAll(): Promise<void> {
+    await this.pic.tearDown();
+  }
+
+  public getMe(): Principal {
+    return this.me.getPrincipal();
+  }
+
+  public getTcyclesTestPylon(): Actor<TCYCLESTESTPYLON> {
+    return this.tcyclesTestPylon;
+  }
+
+  public getIcrcLedger(): Actor<ICRCLEDGER> {
+    return this.icrcActor;
+  }
+
+  public getIcpLedger(): Actor<ICPLEDGER> {
+    return this.icpLedgerActor;
+  }
+
+  public getCyclesLedger(): Actor<CYCLESLEDGER> {
+    return this.cyclesLedgerActor;
+  }
+
+  public async getNow(): Promise<bigint> {
+    let time = await this.pic.getTime();
+    return BigInt(Math.trunc(time));
+  }
+
+  public async advanceTime(mins: number): Promise<void> {
+    await this.pic.advanceTime(mins * 60 * 1000);
+  }
+
+  public async advanceBlocks(blocks: number): Promise<void> {
+    await this.pic.tick(blocks);
+  }
+
+  // used for when a refresh is pending on a node
+  public async advanceBlocksAndTimeMinutes(rounds: number): Promise<void> {
+    let mins = 10; // 10 mins
+    let blocks = 10;
+    for (let i = 0; i < rounds; i++) {
+      await this.pic.advanceTime(mins * 60 * 1000);
+      await this.pic.tick(blocks);
+    }
+  }
+
+  public async advanceBlocksAndTimeHours(rounds: number): Promise<void> {
+    const sixHoursMins = 6 * 60; // 6 hours
+    const shortIntervalMins = 10; // 10 minutes
+    const blocksForSixHours = 10; // Blocks for 6 hours
+    const blocksForShortInterval = 5; // Blocks for 10 minutes
+
+    for (let i = 0; i < rounds; i++) {
+      await this.pic.advanceTime(sixHoursMins * 60 * 1000); // Convert minutes to milliseconds
+      await this.pic.tick(blocksForSixHours);
+
+      // Advance 10 minutes (to process things)
+      await this.pic.advanceTime(shortIntervalMins * 60 * 1000); // Convert minutes to milliseconds
+      await this.pic.tick(blocksForShortInterval);
+    }
+  }
+
+  // Used for when no refresh is pending, a node is updated once every 12 hours (with 10 minutes to process)
+  public async advanceBlocksAndTimeDays(rounds: number): Promise<void> {
+    const halfDayMins = 12 * 60; // 12 hours
+    const shortIntervalMins = 10; // 10 minutes
+    const blocksForHalfDay = 10; // Blocks for 12 hours
+    const blocksForShortInterval = 5; // Blocks for 10 minutes
+
+    for (let i = 0; i < rounds; i++) {
+      // run this twice (24 hours)
+      for (let x = 0; x < 2; x++) {
+        // Advance 12 hours
+        await this.pic.advanceTime(halfDayMins * 60 * 1000); // Convert minutes to milliseconds
+        await this.pic.tick(blocksForHalfDay);
+
+        // Advance 10 minutes
+        await this.pic.advanceTime(shortIntervalMins * 60 * 1000); // Convert minutes to milliseconds
+        await this.pic.tick(blocksForShortInterval);
+      }
+    }
+  }
+
+  public async getTestCanisterCycles(): Promise<number> {
+    return await this.pic.getCyclesBalance(this.testCanisterId);
+  }
+
+  public async createNode(nodeType: CreateRequest): Promise<NodeShared> {
+    let [
+      {
+        endpoint: {
+          // @ts-ignore
+          ic: { account },
+        },
+      },
+    ] = await this.tcyclesTestPylon.icrc55_accounts({
+      owner: this.me.getPrincipal(),
+      subaccount: [],
+    });
+
+    await this.sendIcrc(
+      account,
+      100_0001_0000n // more than enough (10_000 for fees)
+    );
+
+    await this.advanceBlocksAndTimeMinutes(3);
+
+    const reqType: CreateNodeRequest = match(nodeType)
+      .with({ devefi_jes1_tcyclesmint: P.select() }, (c): CreateNodeRequest => {
+        let req: CommonCreateRequest = {
+          controllers: [{ owner: this.me.getPrincipal(), subaccount: [] }],
+          destinations: [
+            [{ ic: { owner: this.me.getPrincipal(), subaccount: [] } }],
+          ],
+          refund: { owner: this.me.getPrincipal(), subaccount: [] },
+          ledgers: [
+            { ic: ICP_LEDGER_CANISTER_ID },
+            { ic: CYCLES_LEDGER_CANISTER_ID }, // second ledger needs to be cycles ledger
+          ],
+          sources: [],
+          extractors: [],
+          affiliate: [],
+          temporary: false,
+          billing_option: 0n,
+          initial_billing_amount: [],
+          temp_id: 0,
+        };
+
+        let creq: CreateRequest = {
+          devefi_jes1_tcyclesmint: {},
+        };
+
+        return [req, creq];
+      })
+      .with(
+        { devefi_jes1_tcyclesredeem: P.select() },
+        (c): CreateNodeRequest => {
+          let req: CommonCreateRequest = {
+            controllers: [{ owner: this.me.getPrincipal(), subaccount: [] }],
+            destinations: [
+              [{ ic: { owner: this.testCanisterId, subaccount: [] } }],
+            ],
+            refund: { owner: this.me.getPrincipal(), subaccount: [] },
+            ledgers: [{ ic: CYCLES_LEDGER_CANISTER_ID }],
+            sources: [],
+            extractors: [],
+            affiliate: [],
+            temporary: false,
+            billing_option: 0n,
+            initial_billing_amount: [],
+            temp_id: 0,
+          };
+
+          let creq: CreateRequest = {
+            devefi_jes1_tcyclesredeem: {},
+          };
+
+          return [req, creq];
+        }
+      )
+      .exhaustive();
+
+    let resp = await this.tcyclesTestPylon.icrc55_command({
+      expire_at: [],
+      request_id: [],
+      controller: { owner: this.me.getPrincipal(), subaccount: [] },
+      signature: [],
+      commands: [{ create_node: reqType }],
+    });
+
+    //@ts-ignore
+    if (resp.ok.commands[0].create_node.err) {
+      //@ts-ignore
+      throw new Error(resp.ok.commands[0].create_node.err);
+    }
+    //@ts-ignore
+    return resp.ok.commands[0].create_node.ok;
+  }
+
+  public async deleteNode(nodeId: number) {
+    let resp = await this.tcyclesTestPylon.icrc55_command({
+      expire_at: [],
+      request_id: [],
+      controller: { owner: this.me.getPrincipal(), subaccount: [] },
+      signature: [],
+      commands: [{ delete_node: nodeId }],
+    });
+
+    //@ts-ignore
+    if (resp.ok.commands[0].delete_node.err) {
+      //@ts-ignore
+      throw new Error(resp.ok.commands[0].delete_node.err);
+    }
+    //@ts-ignore
+    return resp.ok.commands[0].delete_node.ok;
+  }
+
+  public async getNode(nodeId: NodeId): Promise<GetNodeResponse> {
+    let resp = await this.tcyclesTestPylon.icrc55_get_nodes([{ id: nodeId }]);
+    if (resp[0][0] === undefined) throw new Error("Node not found");
+    return resp[0][0];
+  }
+
+  public async sendIcrc(to: Account, amount: bigint): Promise<TransferResult> {
+    let txresp = await this.icrcActor.icrc1_transfer({
+      from_subaccount: [],
+      to: to,
+      amount: amount,
+      fee: [],
+      memo: [],
+      created_at_time: [],
+    });
+
+    if (!("Ok" in txresp)) {
+      throw new Error("Transaction failed");
+    }
+
+    return txresp;
+  }
+
+  public async sendIcp(to: Account, amount: bigint): Promise<TransferResult> {
+    let txresp = await this.icpLedgerActor.icrc1_transfer({
+      from_subaccount: [],
+      to: to,
+      amount: amount,
+      fee: [],
+      memo: [],
+      created_at_time: [],
+    });
+
+    if (!("Ok" in txresp)) {
+      throw new Error("Transaction failed");
+    }
+
+    return txresp;
+  }
+
+  public async getMyBalances() {
+    let icrc = await this.icrcActor.icrc1_balance_of({
+      owner: this.me.getPrincipal(),
+      subaccount: [],
+    });
+
+    let icp = await this.icpLedgerActor.icrc1_balance_of({
+      owner: this.me.getPrincipal(),
+      subaccount: [],
+    });
+
+    let tcycles = await this.cyclesLedgerActor.icrc1_balance_of({
+      owner: this.me.getPrincipal(),
+      subaccount: [],
+    });
+
+    return { icrc_tokens: icrc, icp_tokens: icp, tcycles_tokens: tcycles };
+  }
+
+  public async getBillingBalances() {
+    let author = Principal.fromText(
+      "jv4ws-fbili-a35rv-xd7a5-xwvxw-trink-oluun-g7bcp-oq5f6-35cba-vqe"
+    );
+    // return other balances to check things out
+    let icrc = await this.icrcActor.icrc1_balance_of({
+      owner: author,
+      subaccount: [],
+    });
+
+    let icp = await this.icpLedgerActor.icrc1_balance_of({
+      owner: author,
+      subaccount: [],
+    });
+
+    let tcycles = await this.cyclesLedgerActor.icrc1_balance_of({
+      owner: author,
+      subaccount: [],
+    });
+
+    return { icrc_tokens: icrc, icp_tokens: icp, tcycles_tokens: tcycles };
+  }
+
+  public getNodeSourceAccount(node: NodeShared, port: number): Account {
+    if (!node || node.sources.length === 0) {
+      throw new Error("Invalid node or no sources found");
+    }
+
+    let endpoint = node.sources[port].endpoint;
+
+    if ("ic" in endpoint) {
+      return endpoint.ic.account;
+    }
+
+    throw new Error("Invalid endpoint type: 'ic' endpoint expected");
+  }
+
+  public getNodeCustom(node: NodeShared): Shared__1 {
+    return match(node.custom[0])
+      .with({ devefi_jes1_tcyclesmint: P.select() }, (shared): Shared__1 => {
+        return shared;
+      })
+      .with({ devefi_jes1_tcyclesredeem: P.select() }, (shared): Shared__1 => {
+        return shared;
+      })
+      .exhaustive();
+  }
+
+  public checkNodeUpdatingDone(shared: Shared__1): bigint | null {
+    return match(shared.internals.updating)
+      .with({ Init: P.select() }, (): null => {
+        return null;
+      })
+      .with({ Calling: P.select() }, (): null => {
+        return null;
+      })
+      .with({ Done: P.select() }, (timestamp): bigint => {
+        return timestamp;
+      })
+      .exhaustive();
+  }
+
+  public getNodeDestinationAccount(node: NodeShared): Account {
+    if (!node || node.destinations.length === 0) {
+      throw new Error("Invalid node or no sources found");
+    }
+
+    let endpoint = node.destinations[0].endpoint;
+
+    if ("ic" in endpoint && endpoint.ic.account.length > 0) {
+      return endpoint.ic.account[0];
+    }
+
+    throw new Error("Invalid endpoint type: 'ic' endpoint expected");
+  }
+
+  public async pylonDebug(): Promise<void> {
+    const info = await this.tcyclesTestPylon.get_ledgers_info();
+    const errs = await this.tcyclesTestPylon.get_ledger_errors();
+
+    console.log("ICRC Ledger ID:", info[0].id.toString());
+    //@ts-ignore
+    console.log("ICRC Ledger info:", info[0].info.icrc);
+
+    console.log("ICP Ledger ID:", info[1].id.toString());
+    //@ts-ignore
+    console.log("ICP Ledger info:", info[1].info.icp);
+
+    console.log("Cycles Ledger ID:", info[2].id.toString());
+    //@ts-ignore
+    console.log("Cycles Ledger info:", info[2].info.icrc);
+
+    console.log("Errors in ledgers:", errs);
+  }
+}

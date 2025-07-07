@@ -7,7 +7,7 @@ keywords = [ "devefi", "tcycles", "redeem", "mint" ]
 license = ""
 
 [dependencies]
-base = "0.14.11"
+base = "0.13.3"
 
 [dev-dependencies]
 devefi = "0.4.0"

@@ -40,7 +40,12 @@ module {
 
         let IcpLedger = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai") : IcpLedgerInterface.Self;
 
-        let CyclesLedger = actor ("um5iw-rqaaa-aaaaq-qaaba-cai") : CyclesLedgerInterface.Self;
+        // let CyclesLedger = actor ("um5iw-rqaaa-aaaaq-qaaba-cai") : CyclesLedgerInterface.Self;
+
+        // TESTING ENVIRONMENT: Using a mock/test Cycles Ledger canister
+        // This is a temporary test canister ID for development purposes
+        // Replace before deploying to production environment
+        let CyclesLedger = actor ("7tjcv-pp777-77776-qaaaa-cai") : CyclesLedgerInterface.Self;
 
         let BILLING_FLAT_FEE_MULTIPLIER : Nat = 100;
 
@@ -51,7 +56,7 @@ module {
 
         public func meta() : T.Meta {
             {
-                id = ID; // This has to be same as the variant in vec.custom
+                id = ID;
                 name = "Mint TCYCLES";
                 author = "jes1";
                 description = "Mint TCYCLES from ICP";
@@ -59,7 +64,8 @@ module {
                 version = #beta([0, 1, 0]);
                 create_allowed = true;
                 ledger_slots = [
-                    "TCYCLES"
+                    "MINT",
+                    "TCYCLES",
                 ];
                 billing = [
                     {
@@ -74,6 +80,16 @@ module {
                     subaccount = null;
                 };
                 temporary_allowed = true;
+            };
+        };
+
+        public func run() : () {
+            label vec_loop for ((vid, nodeMem) in Map.entries(mem.main)) {
+                let ?vec = core.getNodeById(vid) else continue vec_loop;
+                if (not vec.active) continue vec_loop;
+                if (vec.billing.frozen) continue vec_loop;
+                if (Option.isSome(vec.billing.expires)) continue vec_loop;
+                Run.single(vid, vec, nodeMem);
             };
         };
 
@@ -96,7 +112,7 @@ module {
         };
 
         module Run {
-            public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : async* () {
+            public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : () {
                 let ?sourceTo = core.getSource(vid, vec, 1) else return;
                 let toBal = core.Source.balance(sourceTo);
                 let toFee = core.Source.fee(sourceTo);
@@ -178,7 +194,8 @@ module {
 
                 let amount_to_mint : Nat = mintBal - mintFee;
 
-                switch (await IcpLedger.icrc1_transfer({ to = { owner = Principal.fromActor(CyclesMinting); subaccount = ?Principal.toBlob(core.getThisCan()) }; fee = null; memo = ?NOTIFY_MINT_CYCLES; from_subaccount = sourceMintAccount.subaccount; created_at_time = null; amount = amount_to_mint })) {
+                // TODO balance is empty, balances are stored in the pylons
+                switch (await IcpLedger.icrc1_transfer({ to = { owner = Principal.fromActor(CyclesMinting); subaccount = ?Principal.toLedgerAccount(core.getThisCan(), null) }; fee = null; memo = ?NOTIFY_MINT_CYCLES; from_subaccount = sourceMintAccount.subaccount; created_at_time = null; amount = amount_to_mint })) {
                     case (#Ok(block_idx)) {
                         switch (await CyclesMinting.notify_mint_cycles({ block_index = Nat64.fromNat(block_idx); deposit_memo = ?NOTIFY_MINT_CYCLES; to_subaccount = sourceToAccount.subaccount })) {
                             case (#Ok(_)) {
