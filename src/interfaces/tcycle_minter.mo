@@ -45,7 +45,7 @@ module {
     mint_tcycles : shared {
         to_subaccount : Blob;
       } -> async NotifyMintCyclesResult;
-    redeem_tcyles : shared { to_canister : Principal } -> async {
+    redeem_tcycles : shared { to_canister : Principal } -> async {
         #Ok : BlockIndex;
         #Err : WithdrawError;
       };

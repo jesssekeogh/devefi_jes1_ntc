@@ -1,6 +1,7 @@
 import MU "mo:mosup";
 import Map "mo:map/Map";
 import Principal "mo:base/Principal";
+import Nat64 "mo:base/Nat64";
 import Error "mo:base/Error";
 import Option "mo:base/Option";
 import Core "mo:devefi/core";
@@ -175,16 +176,24 @@ module {
         module CycleLedgerActions {
             public func redeem_tcycles(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
                 let ?refreshIdx = nodeMem.internals.refresh_idx else return;
+                let ?redeemCanister = core.getDestinationAccountIC(vec, 0) else return;
+                if (Option.isSome(redeemCanister.subaccount)) return; // can't send cycles to subaccounts
+                let ?{ cls = #icp(ledger) } = core.get_ledger_cls(CyclesLedger) else return;
 
-                // // TODO can't withdraw directly from subaccount
-                // switch (await TcycleMinter.redeem_tcycles({ to_subaccount = subaccount })) {
-                //     case (#Ok(_)) {
-                //         NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Ok());
-                //     };
-                //     case (#Err(err)) {
-                //         NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Err(debug_show err));
-                //     };
-                // };
+                if (ledger.isSent(refreshIdx)) {
+                    switch (await TcycleMinter.redeem_tcycles({ to_canister = redeemCanister.owner })) {
+                        case (#Ok(_)) {
+                            if (Option.equal(?refreshIdx, nodeMem.internals.refresh_idx, Nat64.equal)) {
+                                nodeMem.internals.refresh_idx := null;
+                            };
+
+                            NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Ok());
+                        };
+                        case (#Err(err)) {
+                            NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Err(debug_show err));
+                        };
+                    };
+                };
 
             };
         };
