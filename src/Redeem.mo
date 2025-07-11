@@ -6,8 +6,8 @@ import Option "mo:base/Option";
 import Core "mo:devefi/core";
 import Ver1 "./memory/v1";
 import I "./interface";
-import CyclesLedgerInterface "./interfaces/cycles_ledger";
 import NodeUtils "./utils/node";
+import TcycleMinterInterface "./interfaces/tcycle_minter";
 
 module {
     let T = Core.VectorModule;
@@ -33,12 +33,14 @@ module {
 
         public type NodeMem = Ver1.NodeMem;
 
-        // let CyclesLedger = actor ("um5iw-rqaaa-aaaaq-qaaba-cai") : CyclesLedgerInterface.Self;
+        // let CyclesLedger = Principal.fromText("um5iw-rqaaa-aaaaq-qaaba-cai");
 
         // TESTING ENVIRONMENT: Using a mock/test Cycles Ledger canister
         // This is a temporary test canister ID for development purposes
         // Replace before deploying to production environment
-        let CyclesLedger = actor ("7tjcv-pp777-77776-qaaaa-cai") : CyclesLedgerInterface.Self;
+        let CyclesLedger = Principal.fromText("7tjcv-pp777-77776-qaaaa-cai");
+
+        let TcycleMinter = actor ("oaez2-oaaaa-aaaaa-qbkmq-cai") : TcycleMinterInterface.Self;
 
         public func meta() : T.Meta {
             {
@@ -46,7 +48,7 @@ module {
                 name = "Redeem TCYCLES";
                 author = "jes1";
                 description = "Redeem TCYCLES for CYCLES";
-                supported_ledgers = [#ic(Principal.fromActor(CyclesLedger))]; // tcycles ledger
+                supported_ledgers = [#ic(CyclesLedger)];
                 version = #beta([0, 1, 0]);
                 create_allowed = true;
                 ledger_slots = [
@@ -60,6 +62,16 @@ module {
                     subaccount = null;
                 };
                 temporary_allowed = true;
+            };
+        };
+
+        public func run() : () {
+            label vec_loop for ((vid, nodeMem) in Map.entries(mem.main)) {
+                let ?vec = core.getNodeById(vid) else continue vec_loop;
+                if (not vec.active) continue vec_loop;
+                if (vec.billing.frozen) continue vec_loop;
+                if (Option.isSome(vec.billing.expires)) continue vec_loop;
+                Run.single(vid, vec, nodeMem);
             };
         };
 
@@ -77,6 +89,30 @@ module {
         };
 
         module Run {
+            public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : () {
+                let ?sourceRedeem = core.getSource(vid, vec, 0) else return;
+                let redeemBal = core.Source.balance(sourceRedeem);
+                let redeemFee = core.Source.fee(sourceRedeem);
+
+                if (redeemBal > redeemFee) {
+                    let ?redeemCanister = core.getDestinationAccountIC(vec, 0) else return;
+                    if (Option.isSome(redeemCanister.subaccount)) return; // can't send cycles to subaccounts
+
+                    let #ok(intent) = core.Source.Send.intent(
+                        sourceRedeem,
+                        #external_account({
+                            owner = Principal.fromActor(TcycleMinter);
+                            subaccount = ?Principal.toLedgerAccount(redeemCanister.owner, null);
+                        }),
+                        redeemBal,
+                    ) else return;
+
+                    let txId = core.Source.Send.commit(intent);
+
+                    NodeUtils.tx_sent(nodeMem, txId);
+                };
+            };
+
             public func singleAsync(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : async* () {
                 try {
                     await* CycleLedgerActions.redeem_tcycles(nodeMem, vid, vec);
@@ -138,25 +174,17 @@ module {
 
         module CycleLedgerActions {
             public func redeem_tcycles(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
-                let ?sourceRedeem = core.getSource(vid, vec, 0) else return;
-                let ?sourceRedeemAccount = core.getSourceAccountIC(vec, 0) else return;
-                let redeemBal = core.Source.balance(sourceRedeem);
-                let redeemFee = core.Source.fee(sourceRedeem);
+                let ?refreshIdx = nodeMem.internals.refresh_idx else return;
 
-                let ?{ owner; subaccount } = core.getDestinationAccountIC(vec, 0) else return;
-                if (Option.isSome(subaccount)) return; // can't send cycles to subaccounts
-
-                let amount_to_withdraw : Nat = redeemBal - redeemFee;
-
-                // TODO can't withdraw directly from subaccount
-                switch (await CyclesLedger.withdraw({ to = owner; from_subaccount = sourceRedeemAccount.subaccount; created_at_time = null; amount = amount_to_withdraw })) {
-                    case (#Ok(_)) {
-                        NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Ok());
-                    };
-                    case (#Err(err)) {
-                        NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Err(debug_show err));
-                    };
-                };
+                // // TODO can't withdraw directly from subaccount
+                // switch (await TcycleMinter.redeem_tcycles({ to_subaccount = subaccount })) {
+                //     case (#Ok(_)) {
+                //         NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Ok());
+                //     };
+                //     case (#Err(err)) {
+                //         NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Err(debug_show err));
+                //     };
+                // };
 
             };
         };

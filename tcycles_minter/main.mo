@@ -73,7 +73,7 @@ shared ({ caller = owner }) actor class TcyclesMinter({
         };
     };
 
-    public func redeem_tcyles({ to_canister : Principal }) : async {
+    public func redeem_tcycles({ to_canister : Principal }) : async {
         #Ok : TcyclesLedgerInterface.BlockIndex;
         #Err : TcyclesLedgerInterface.WithdrawError;
     } {

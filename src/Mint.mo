@@ -7,10 +7,8 @@ import Option "mo:base/Option";
 import Core "mo:devefi/core";
 import Ver1 "./memory/v1";
 import I "./interface";
-import CyclesMintingInterface "./interfaces/cycles_minting";
-import CyclesLedgerInterface "./interfaces/cycles_ledger";
-import IcpLedgerInterface "mo:devefi-icp-ledger/icp_ledger";
 import NodeUtils "./utils/node";
+import TcycleMinterInterface "./interfaces/tcycle_minter";
 
 module {
     let T = Core.VectorModule;
@@ -26,7 +24,7 @@ module {
     let M = Mem.Vector.V1;
 
     public let ID = "devefi_jes1_tcyclesmint";
-    
+
     // need dvf here
     public class Mod({
         xmem : MU.MemShell<M.Mem>;
@@ -37,23 +35,20 @@ module {
 
         public type NodeMem = Ver1.NodeMem;
 
-        let CyclesMinting = actor ("rkp4c-7iaaa-aaaaa-aaaca-cai") : CyclesMintingInterface.Self;
+        let IcpLedger = Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai");
 
-        let IcpLedger = actor ("ryjl3-tyaaa-aaaaa-aaaba-cai") : IcpLedgerInterface.Self;
-
-        // let CyclesLedger = actor ("um5iw-rqaaa-aaaaq-qaaba-cai") : CyclesLedgerInterface.Self;
+        // let CyclesLedger = Principal.fromText("um5iw-rqaaa-aaaaq-qaaba-cai");
 
         // TESTING ENVIRONMENT: Using a mock/test Cycles Ledger canister
         // This is a temporary test canister ID for development purposes
         // Replace before deploying to production environment
-        let CyclesLedger = actor ("7tjcv-pp777-77776-qaaaa-cai") : CyclesLedgerInterface.Self;
+        let CyclesLedger = Principal.fromText("7tjcv-pp777-77776-qaaaa-cai");
 
-        let BILLING_FLAT_FEE_MULTIPLIER : Nat = 100;
+        let TcycleMinter = actor ("oaez2-oaaaa-aaaaa-qbkmq-cai") : TcycleMinterInterface.Self;
+
+        // TODO: add testing environment TcycleMinter canister ID
 
         let MINIMUM_MINT : Nat = 100_000_000; // 1 ICP
-
-        // From here: https://forum.dfinity.org/t/a-couple-of-new-cmc-features-icrc-memo-and-automatic-refunds/41396
-        let NOTIFY_MINT_CYCLES : Blob = "\4d\49\4e\54\00\00\00\00";
 
         public func meta() : T.Meta {
             {
@@ -61,7 +56,7 @@ module {
                 name = "Mint TCYCLES";
                 author = "jes1";
                 description = "Mint TCYCLES from ICP";
-                supported_ledgers = [#ic(Principal.fromActor(IcpLedger)), #ic(Principal.fromActor(CyclesLedger))]; // icp ledger and cycles ledger
+                supported_ledgers = [#ic(IcpLedger), #ic(CyclesLedger)];
                 version = #beta([0, 1, 0]);
                 create_allowed = true;
                 ledger_slots = [
@@ -71,7 +66,7 @@ module {
                 billing = [
                     {
                         cost_per_day = 0;
-                        transaction_fee = #flat_fee_multiplier(BILLING_FLAT_FEE_MULTIPLIER);
+                        transaction_fee = #flat_fee_multiplier(100);
                     },
                 ];
                 sources = sources(0);
@@ -109,17 +104,19 @@ module {
 
         module Run {
             public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : () {
-                // Forward icp to the cycles ledger
+                // Forward icp to the tcycle minter
                 let ?sourceMint = core.getSource(vid, vec, 0) else return;
                 let mintBal = core.Source.balance(sourceMint);
                 let mintFee = core.Source.fee(sourceMint);
 
                 if (mintBal > mintFee + MINIMUM_MINT) {
+                    let ?sourceToAccount = core.getSourceAccountIC(vec, 1) else return;
+
                     let #ok(intent) = core.Source.Send.intent(
                         sourceMint,
                         #external_account({
-                            owner = Principal.fromActor(CyclesMinting);
-                            subaccount = ?Principal.toLedgerAccount(core.getThisCan(), null);
+                            owner = Principal.fromActor(TcycleMinter);
+                            subaccount = sourceToAccount.subaccount; // this is where the tcycles will be sent
                         }),
                         mintBal,
                     ) else return;
@@ -207,12 +204,16 @@ module {
         module CycleMintingActions {
             public func mint_tcycles(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
                 let ?refreshIdx = nodeMem.internals.refresh_idx else return;
-                let ?{ cls = #icp(ledger) } = core.get_ledger_cls(Principal.fromActor(IcpLedger)) else return;
-                let ?sourceToAccount = core.getSourceAccountIC(vec, 1) else return;
+                let ?{ cls = #icp(ledger) } = core.get_ledger_cls(IcpLedger) else return;
+                let ?{ subaccount = ?subaccount } = core.getSourceAccountIC(vec, 1) else return;
 
                 if (ledger.isSent(refreshIdx)) {
-                    switch (await CyclesMinting.notify_mint_cycles({ block_index = refreshIdx; deposit_memo = ?NOTIFY_MINT_CYCLES; to_subaccount = sourceToAccount.subaccount })) {
+                    switch (await TcycleMinter.mint_tcycles({ to_subaccount = subaccount })) {
                         case (#Ok(_)) {
+                            if (Option.equal(?refreshIdx, nodeMem.internals.refresh_idx, Nat64.equal)) {
+                                nodeMem.internals.refresh_idx := null;
+                            };
+
                             NodeUtils.log_activity(nodeMem, "mint_tcycles", #Ok());
                         };
                         case (#Err(err)) {

@@ -23,6 +23,18 @@
       "post_install": [
         "cp .dfx/ic/canisters/router/router.wasm.gz tests/pic/setup/router"
       ]
+    },
+    "tcycles_minter": {
+      "main": "tcycles_minter/main.mo",
+      "type": "motoko",
+      "gzip": true,
+      "declarations": {
+        "node_compatibility": true,
+        "output": "tests/pic/setup/tcycles_minter/declarations"
+      },
+      "post_install": [
+        "cp .dfx/ic/canisters/tcycles_minter/tcycles_minter.wasm.gz tests/pic/setup/tcycles_minter"
+      ]
     }
   },
   "defaults": {
