@@ -14,6 +14,7 @@ module {
     public type NodeMem = {
         internals : {
             var updating : UpdatingStatus;
+            var refresh_idx : ?Nat64;
         };
         var log : [Activity];
     };

@@ -9,6 +9,7 @@ module {
     public type Shared = {
         internals : {
             updating : Ver1.UpdatingStatus;
+            refresh_idx : ?Nat64;
         };
         log : [Ver1.Activity];
     };

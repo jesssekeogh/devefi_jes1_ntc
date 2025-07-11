@@ -26,7 +26,8 @@ module {
     let M = Mem.Vector.V1;
 
     public let ID = "devefi_jes1_tcyclesmint";
-
+    
+    // need dvf here
     public class Mod({
         xmem : MU.MemShell<M.Mem>;
         core : Core.Mod;
@@ -99,12 +100,7 @@ module {
                 if (not vec.active) continue vec_loop;
                 if (vec.billing.frozen) continue vec_loop;
                 if (Option.isSome(vec.billing.expires)) continue vec_loop;
-
-                let ?sourceMint = core.getSource(vid, vec, 0) else continue vec_loop;
-                let mintBal = core.Source.balance(sourceMint);
-                let mintFee = core.Source.fee(sourceMint);
-
-                if (NodeUtils.node_ready(nodeMem, mintBal, mintFee + MINIMUM_MINT)) {
+                if (NodeUtils.node_ready(nodeMem)) {
                     await* Run.singleAsync(vid, vec, nodeMem);
                     return; // return after finding the first ready node
                 };
@@ -113,6 +109,27 @@ module {
 
         module Run {
             public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : () {
+                // Forward icp to the cycles ledger
+                let ?sourceMint = core.getSource(vid, vec, 0) else return;
+                let mintBal = core.Source.balance(sourceMint);
+                let mintFee = core.Source.fee(sourceMint);
+
+                if (mintBal > mintFee + MINIMUM_MINT) {
+                    let #ok(intent) = core.Source.Send.intent(
+                        sourceMint,
+                        #external_account({
+                            owner = Principal.fromActor(CyclesMinting);
+                            subaccount = ?Principal.toLedgerAccount(core.getThisCan(), null);
+                        }),
+                        mintBal,
+                    ) else return;
+
+                    let txId = core.Source.Send.commit(intent);
+
+                    NodeUtils.tx_sent(nodeMem, txId);
+                };
+
+                // Forward tcycles to the destination
                 let ?sourceTo = core.getSource(vid, vec, 1) else return;
                 let toBal = core.Source.balance(sourceTo);
                 let toFee = core.Source.fee(sourceTo);
@@ -141,7 +158,10 @@ module {
 
         public func create(vid : T.NodeId, _req : T.CommonCreateRequest, t : I.CreateRequest) : T.Create {
             let nodeMem : NodeMem = {
-                internals = { var updating = #Init };
+                internals = {
+                    var updating = #Init;
+                    var refresh_idx = null;
+                };
                 var log = [];
             };
             ignore Map.put(mem.main, Map.n32hash, vid, nodeMem);
@@ -168,6 +188,7 @@ module {
             #ok {
                 internals = {
                     updating = t.internals.updating;
+                    refresh_idx = t.internals.refresh_idx;
                 };
                 log = t.log;
             };
@@ -185,29 +206,18 @@ module {
 
         module CycleMintingActions {
             public func mint_tcycles(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
-                let ?sourceMint = core.getSource(vid, vec, 0) else return;
-                let ?sourceMintAccount = core.getSourceAccountIC(vec, 0) else return;
-                let mintBal = core.Source.balance(sourceMint);
-                let mintFee = core.Source.fee(sourceMint);
-
+                let ?refreshIdx = nodeMem.internals.refresh_idx else return;
+                let ?{ cls = #icp(ledger) } = core.get_ledger_cls(Principal.fromActor(IcpLedger)) else return;
                 let ?sourceToAccount = core.getSourceAccountIC(vec, 1) else return;
 
-                let amount_to_mint : Nat = mintBal - mintFee;
-
-                // TODO balance is empty, balances are stored in the pylons
-                switch (await IcpLedger.icrc1_transfer({ to = { owner = Principal.fromActor(CyclesMinting); subaccount = ?Principal.toLedgerAccount(core.getThisCan(), null) }; fee = null; memo = ?NOTIFY_MINT_CYCLES; from_subaccount = sourceMintAccount.subaccount; created_at_time = null; amount = amount_to_mint })) {
-                    case (#Ok(block_idx)) {
-                        switch (await CyclesMinting.notify_mint_cycles({ block_index = Nat64.fromNat(block_idx); deposit_memo = ?NOTIFY_MINT_CYCLES; to_subaccount = sourceToAccount.subaccount })) {
-                            case (#Ok(_)) {
-                                NodeUtils.log_activity(nodeMem, "mint_tcycles", #Ok());
-                            };
-                            case (#Err(err)) {
-                                NodeUtils.log_activity(nodeMem, "mint_tcycles", #Err(debug_show err));
-                            };
+                if (ledger.isSent(refreshIdx)) {
+                    switch (await CyclesMinting.notify_mint_cycles({ block_index = refreshIdx; deposit_memo = ?NOTIFY_MINT_CYCLES; to_subaccount = sourceToAccount.subaccount })) {
+                        case (#Ok(_)) {
+                            NodeUtils.log_activity(nodeMem, "mint_tcycles", #Ok());
                         };
-                    };
-                    case (#Err(err)) {
-                        NodeUtils.log_activity(nodeMem, "mint_tcycles", #Err(debug_show err));
+                        case (#Err(err)) {
+                            NodeUtils.log_activity(nodeMem, "mint_tcycles", #Err(debug_show err));
+                        };
                     };
                 };
             };

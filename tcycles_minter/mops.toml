@@ -1,0 +1,4 @@
+[dependencies]
+base = "0.13.3"
+devefi-icrc-ledger = "1.6.0"
+devefi-icp-ledger = "1.6.0"

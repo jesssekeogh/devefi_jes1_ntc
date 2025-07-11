@@ -69,12 +69,7 @@ module {
                 if (not vec.active) continue vec_loop;
                 if (vec.billing.frozen) continue vec_loop;
                 if (Option.isSome(vec.billing.expires)) continue vec_loop;
-
-                let ?sourceRedeem = core.getSource(vid, vec, 0) else return;
-                let redeemBal = core.Source.balance(sourceRedeem);
-                let redeemFee = core.Source.fee(sourceRedeem);
-
-                if (NodeUtils.node_ready(nodeMem, redeemBal, redeemFee * 1000)) {
+                if (NodeUtils.node_ready(nodeMem)) {
                     await* Run.singleAsync(vid, vec, nodeMem);
                     return; // return after finding the first ready node
                 };
@@ -97,6 +92,7 @@ module {
             let nodeMem : NodeMem = {
                 internals = {
                     var updating = #Init;
+                    var refresh_idx = null;
                 };
                 var log = [];
             };
@@ -124,6 +120,7 @@ module {
             #ok {
                 internals = {
                     updating = t.internals.updating;
+                    refresh_idx = t.internals.refresh_idx;
                 };
                 log = t.log;
             };
@@ -151,6 +148,7 @@ module {
 
                 let amount_to_withdraw : Nat = redeemBal - redeemFee;
 
+                // TODO can't withdraw directly from subaccount
                 switch (await CyclesLedger.withdraw({ to = owner; from_subaccount = sourceRedeemAccount.subaccount; created_at_time = null; amount = amount_to_withdraw })) {
                     case (#Ok(_)) {
                         NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Ok());
