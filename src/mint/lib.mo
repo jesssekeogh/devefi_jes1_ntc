@@ -9,6 +9,7 @@ import Core "mo:devefi/core";
 import U "mo:devefi/utils";
 import Ver1 "./memory/v1";
 import I "./interface";
+import Utils "../utils/Utils";
 import NtcMinterInterface "../interfaces/ntc_minter";
 import CyclesMintingInterface "../interfaces/cycles_minting";
 
@@ -44,9 +45,9 @@ module {
 
         // let NtcLedger = Principal.fromText("production-ntc-ledger-id");
         // let NtcMinter = actor ("production-ntc-minter-id") : NtcMinterInterface.Self;
-        
+
         // TESTING ENVIRONMENT (comment out for production):
-        
+
         let NtcLedger = Principal.fromText("ueyo2-wx777-77776-aaatq-cai");
         let NtcMinter = actor ("udzio-3p777-77776-aaata-cai") : NtcMinterInterface.Self;
 
@@ -106,19 +107,16 @@ module {
 
         module Run {
             public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : () {
-                // Forward icp to the ntc minter
                 let ?sourceMint = core.getSource(vid, vec, 0) else return;
                 let mintBal = core.Source.balance(sourceMint);
                 let mintFee = core.Source.fee(sourceMint);
 
                 if (mintBal > mintFee + MINIMUM_MINT) {
-                    let ?sourceToAccount = core.getSourceAccountIC(vec, 1) else return;
-
                     let #ok(intent) = core.Source.Send.intent(
                         sourceMint,
                         #external_account({
                             owner = Principal.fromActor(CmcMinter);
-                            subaccount = sourceToAccount.subaccount;
+                            subaccount = ?Utils.principalToSubaccount(core.getThisCan());
                         }),
                         mintBal,
                     ) else return;
@@ -203,30 +201,6 @@ module {
             [(1, "To")];
         };
 
-        module NtcMintingActions {
-            // TODO use the new onSent and then mint cycles to this canister and send with cycles to the minter
-            public func mint_ntc(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
-                let ?refreshIdx = nodeMem.internals.refresh_idx else return;
-                let ?{ cls = #icp(ledger) } = core.get_ledger_cls(IcpLedger) else return;
-                let ?{ subaccount = ?subaccount } = core.getSourceAccountIC(vec, 1) else return;
-
-                if (ledger.isSent(refreshIdx)) {
-                    // switch (await NtcMinter.mint_tcycles({ to_subaccount = subaccount })) {
-                    //     case (#Ok(_)) {
-                    //         if (Option.equal(?refreshIdx, nodeMem.internals.refresh_idx, Nat64.equal)) {
-                    //             nodeMem.internals.refresh_idx := null;
-                    //         };
-
-                    //         NodeUtils.log_activity(nodeMem, "mint_ntc", #Ok());
-                    //     };
-                    //     case (#Err(err)) {
-                    //         NodeUtils.log_activity(nodeMem, "mint_ntc", #Err(debug_show err));
-                    //     };
-                    // };
-                };
-            };
-        };
-
         module NodeUtils {
             public func node_ready(nodeMem : Ver1.NodeMem) : Bool {
                 let timeout : Nat64 = (3 * 60 * 1_000_000_000); // 3 mins
@@ -279,5 +253,30 @@ module {
                 nodeMem.log := Buffer.toArray(log);
             };
         };
+
+        module NtcMintingActions {
+            // TODO use the new onSent and then mint cycles to this canister and send with cycles to the minter
+            public func mint_ntc(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
+                let ?refreshIdx = nodeMem.internals.refresh_idx else return;
+                let ?{ cls = #icp(ledger) } = core.get_ledger_cls(IcpLedger) else return;
+                let ?{ subaccount = ?subaccount } = core.getSourceAccountIC(vec, 1) else return;
+
+                if (ledger.isSent(refreshIdx)) {
+                    // switch (await NtcMinter.mint_tcycles({ to_subaccount = subaccount })) {
+                    //     case (#Ok(_)) {
+                    //         if (Option.equal(?refreshIdx, nodeMem.internals.refresh_idx, Nat64.equal)) {
+                    //             nodeMem.internals.refresh_idx := null;
+                    //         };
+
+                    //         NodeUtils.log_activity(nodeMem, "mint_ntc", #Ok());
+                    //     };
+                    //     case (#Err(err)) {
+                    //         NodeUtils.log_activity(nodeMem, "mint_ntc", #Err(debug_show err));
+                    //     };
+                    // };
+                };
+            };
+        };
     };
+
 };

@@ -2,14 +2,11 @@ import MU "mo:mosup";
 import Map "mo:map/Map";
 import Principal "mo:base/Principal";
 import Option "mo:base/Option";
-import Blob "mo:base/Blob";
-import Iter "mo:base/Iter";
-import Nat8 "mo:base/Nat8";
-import IterTools "mo:itertools/Iter";
 import Core "mo:devefi/core";
 import Ver1 "./memory/v1";
 import I "./interface";
 import NtcMinterInterface "../interfaces/ntc_minter";
+import Utils "../utils/Utils";
 
 module {
     let T = Core.VectorModule;
@@ -94,7 +91,7 @@ module {
                         sourceRedeem,
                         #external_account({
                             owner = Principal.fromActor(NtcMinter);
-                            subaccount = ?NtcRedeemActions.canisterToSubaccount(redeemCanister.owner);
+                            subaccount = ?Utils.principalToSubaccount(redeemCanister.owner);
                         }),
                         redeemBal,
                     ) else return;
@@ -150,20 +147,6 @@ module {
 
         public func destinations(_id : T.NodeId) : T.Endpoints {
             [(0, "Canister")];
-        };
-
-        module NtcRedeemActions = {
-            public func canisterToSubaccount(canister_id : Principal) : Blob {
-                // Convert principal to array of Nat8
-                let arr = Principal.toBlob(canister_id) |> Blob.toArray(_);
-
-                // Prepend length and pad to 32 bytes, then convert back to Blob
-                Iter.fromArray(arr)
-                |> IterTools.prepend(Nat8.fromNat(arr.size()), _)
-                |> IterTools.pad<Nat8>(_, 32, 0)
-                |> Iter.toArray(_)
-                |> Blob.fromArray(_);
-            };
         };
     };
 };
