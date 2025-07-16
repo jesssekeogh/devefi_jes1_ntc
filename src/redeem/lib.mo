@@ -104,7 +104,7 @@ module {
             };
         };
 
-        public func create(vid : T.NodeId, _req : T.CommonCreateRequest, t : I.CreateRequest) : T.Create {
+        public func create(vid : T.NodeId, _req : T.CommonCreateRequest, _t : I.CreateRequest) : T.Create {
             let nodeMem : NodeMem = {
                 internals = {
                     var updating = #Init;
@@ -124,7 +124,7 @@ module {
 
         };
 
-        public func modify(vid : T.NodeId, m : I.ModifyRequest) : T.Modify {
+        public func modify(vid : T.NodeId, _m : I.ModifyRequest) : T.Modify {
             let ?_t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
 
             #ok();
