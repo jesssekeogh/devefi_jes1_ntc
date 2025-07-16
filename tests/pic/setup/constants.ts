@@ -18,9 +18,9 @@ export const CMC_CANISTER_ID = Principal.fromText(
 );
 
 // This is a test canister ID for development purposes
-// The real Cycles Ledger canister ID should be used in production
-export const CYCLES_LEDGER_CANISTER_ID = Principal.fromText(
-  "7tjcv-pp777-77776-qaaaa-cai"
+// The real NTC Ledger canister ID should be used in production
+export const NTC_LEDGER_CANISTER_ID = Principal.fromText(
+  "ueyo2-wx777-77776-aaatq-cai"
 );
 
 export const NNS_STATE_PATH = resolve(__dirname, "..", "nns_state");

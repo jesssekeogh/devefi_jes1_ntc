@@ -1,5 +1,5 @@
 import { Manager } from "../setup/manager.ts";
-import { NodeShared } from "../setup/tcycles_test_pylon/declarations/tcycles_test_pylon.did";
+import { NodeShared } from "../setup/ntc_test_pylon/declarations/ntc_test_pylon.did";
 
 describe("Mint", () => {
   let manager: Manager;
@@ -7,20 +7,20 @@ describe("Mint", () => {
 
   beforeAll(async () => {
     manager = await Manager.beforeAll();
-    node = await manager.createNode({ devefi_jes1_tcyclesmint: null });
+    node = await manager.createNode({ devefi_jes1_ntcmint: null });
   });
 
   afterAll(async () => {
     await manager.afterAll();
   });
 
-  it("should mint and send tcycles", async () => {
+  it("should mint and send ntc", async () => {
     let beforeBalance = await manager.getMyBalances();
     expect(node.sources[0].balance).toBe(0n);
     expect(
       manager.checkNodeUpdatingDone(manager.getNodeCustom(node))
     ).toBeNull();
-    expect(beforeBalance.tcycles_tokens).toBe(0n);
+    expect(beforeBalance.ntc_tokens).toBe(0n);
 
     await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 2_0000_0000n);
 
@@ -28,12 +28,13 @@ describe("Mint", () => {
 
     node = await manager.getNode(node.id);
     let afterBalance = await manager.getMyBalances();
-    
-    console.log(manager.getNodeCustom(node).log)
+
+    console.log(manager.getNodeCustom(node).log);
+
     expect(node.sources[0].balance).toBe(0n);
     expect(
       manager.checkNodeUpdatingDone(manager.getNodeCustom(node))
     ).not.toBeNull();
-    expect(afterBalance.tcycles_tokens).toBeGreaterThan(0n);
+    expect(afterBalance.ntc_tokens).toBeGreaterThan(0n);
   });
 });

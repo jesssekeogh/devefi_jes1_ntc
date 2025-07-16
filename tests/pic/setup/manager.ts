@@ -1,5 +1,5 @@
 import {
-  _SERVICE as TCYCLESTESTPYLON,
+  _SERVICE as NTCTESTPYLON,
   CreateRequest,
   CommonCreateRequest,
   NodeShared,
@@ -7,8 +7,9 @@ import {
   GetNodeResponse,
   CreateNodeRequest,
   Shared__1,
-} from "./tcycles_test_pylon/declarations/tcycles_test_pylon.did.js";
-import { _SERVICE as CYCLESLEDGER } from "./cyclesledger/declarations/cycles_ledger.js";
+} from "./ntc_test_pylon/declarations/ntc_test_pylon.did.js";
+import { _SERVICE as NTCMINTER } from "./ntc_minter/declarations/ntc_minter.did.js";
+import { _SERVICE as NTCLEDGER } from "./ntc_ledger/declarations/ntc_ledger.idl.js";
 import {
   _SERVICE as ICRCLEDGER,
   Account,
@@ -22,46 +23,49 @@ import { Actor, PocketIc, createIdentity, SubnetStateType } from "@dfinity/pic";
 import { Principal } from "@dfinity/principal";
 import {
   ICP_LEDGER_CANISTER_ID,
-  CYCLES_LEDGER_CANISTER_ID,
+  NTC_LEDGER_CANISTER_ID,
 } from "./constants.ts";
-import { TcyclesTestPylon, ICRCLedger } from "./index";
+import { NtcTestPylon, ICRCLedger, NtcMinter, NtcLedger } from "./index";
 import { minterIdentity } from "./nns/identity.ts";
 import { NNS_STATE_PATH } from "./constants.ts";
 import Router from "./router/router.ts";
-import CyclesLedger from "./cyclesledger/cycles_ledger.ts";
 import { match, P } from "ts-pattern";
 
 export class Manager {
   private readonly me: ReturnType<typeof createIdentity>;
   private readonly pic: PocketIc;
-  private readonly tcyclesTestPylon: Actor<TCYCLESTESTPYLON>;
+  private readonly ntcTestPylon: Actor<NTCTESTPYLON>;
   private readonly icrcActor: Actor<ICRCLEDGER>;
   private readonly icpLedgerActor: Actor<ICPLEDGER>;
-  private readonly cyclesLedgerActor: Actor<CYCLESLEDGER>;
+  private readonly ntcLedgerActor: Actor<NTCLEDGER>;
+  private readonly ntcMinterActor: Actor<NTCMINTER>;
   private readonly testCanisterId: Principal;
 
   constructor(
     pic: PocketIc,
     me: ReturnType<typeof createIdentity>,
-    tcyclesTestPylon: Actor<TCYCLESTESTPYLON>,
+    ntcTestPylon: Actor<NTCTESTPYLON>,
     icrcActor: Actor<ICRCLEDGER>,
     icpLedgerActor: Actor<ICPLEDGER>,
-    cyclesLedgerActor: Actor<CYCLESLEDGER>,
+    ntcLedgerActor: Actor<NTCLEDGER>,
+    ntcMinterActor: Actor<NTCMINTER>,
     testCanisterId: Principal
   ) {
     this.pic = pic;
     this.me = me;
-    this.tcyclesTestPylon = tcyclesTestPylon;
+    this.ntcTestPylon = ntcTestPylon;
     this.icrcActor = icrcActor;
     this.icpLedgerActor = icpLedgerActor;
-    this.cyclesLedgerActor = cyclesLedgerActor;
+    this.ntcLedgerActor = ntcLedgerActor;
+    this.ntcMinterActor = ntcMinterActor;
     this.testCanisterId = testCanisterId;
 
     // set identitys as me
-    this.tcyclesTestPylon.setIdentity(this.me);
+    this.ntcTestPylon.setIdentity(this.me);
     this.icrcActor.setIdentity(this.me);
     this.icpLedgerActor.setIdentity(this.me);
-    this.cyclesLedgerActor.setIdentity(this.me);
+    this.ntcLedgerActor.setIdentity(this.me);
+    this.ntcMinterActor.setIdentity(this.me);
   }
 
   public static async beforeAll(): Promise<Manager> {
@@ -87,14 +91,17 @@ export class Manager {
     // setup chrono router
     // we are not testing the router here, but we need it to spin up a pylon
     // pass time to allow router to setup slices
-    await Router(pic);
+    const router = await Router(pic);
     await pic.advanceTime(240 * 60 * 1000);
     await pic.tick(240);
 
-    let cyclesLedgerFixture = await CyclesLedger(pic);
+
+    const minter = await NtcMinter(pic);
+
+    let ntcLedgerFixture = await NtcLedger(pic, minter.canisterId);
 
     // setup vector
-    let pylonFixture = await TcyclesTestPylon(pic);
+    let pylonFixture = await NtcTestPylon(pic);
 
     let testCanister = await pic.createCanister();
 
@@ -123,7 +130,8 @@ export class Manager {
       pylonFixture.actor,
       icrcFixture.actor,
       icpLedgerActor,
-      cyclesLedgerFixture.actor,
+      ntcLedgerFixture.actor,
+      minter.actor,
       testCanister
     );
   }
@@ -136,8 +144,12 @@ export class Manager {
     return this.me.getPrincipal();
   }
 
-  public getTcyclesTestPylon(): Actor<TCYCLESTESTPYLON> {
-    return this.tcyclesTestPylon;
+  public getNtcMinter(): Actor<NTCMINTER> {
+    return this.ntcMinterActor;
+  }
+
+  public getNtcTestPylon(): Actor<NTCTESTPYLON> {
+    return this.ntcTestPylon;
   }
 
   public getIcrcLedger(): Actor<ICRCLEDGER> {
@@ -148,8 +160,8 @@ export class Manager {
     return this.icpLedgerActor;
   }
 
-  public getCyclesLedger(): Actor<CYCLESLEDGER> {
-    return this.cyclesLedgerActor;
+  public getNtcLedger(): Actor<NTCLEDGER> {
+    return this.ntcLedgerActor;
   }
 
   public async getNow(): Promise<bigint> {
@@ -224,7 +236,7 @@ export class Manager {
           ic: { account },
         },
       },
-    ] = await this.tcyclesTestPylon.icrc55_accounts({
+    ] = await this.ntcTestPylon.icrc55_accounts({
       owner: this.me.getPrincipal(),
       subaccount: [],
     });
@@ -237,7 +249,7 @@ export class Manager {
     await this.advanceBlocksAndTimeMinutes(3);
 
     const reqType: CreateNodeRequest = match(nodeType)
-      .with({ devefi_jes1_tcyclesmint: P.select() }, (c): CreateNodeRequest => {
+      .with({ devefi_jes1_ntcmint: P.select() }, (c): CreateNodeRequest => {
         let req: CommonCreateRequest = {
           controllers: [{ owner: this.me.getPrincipal(), subaccount: [] }],
           destinations: [
@@ -246,7 +258,7 @@ export class Manager {
           refund: { owner: this.me.getPrincipal(), subaccount: [] },
           ledgers: [
             { ic: ICP_LEDGER_CANISTER_ID },
-            { ic: CYCLES_LEDGER_CANISTER_ID }, // second ledger needs to be cycles ledger
+            { ic: NTC_LEDGER_CANISTER_ID }, // second ledger needs to be cycles ledger
           ],
           sources: [],
           extractors: [],
@@ -258,13 +270,13 @@ export class Manager {
         };
 
         let creq: CreateRequest = {
-          devefi_jes1_tcyclesmint: {},
+          devefi_jes1_ntcmint: {},
         };
 
         return [req, creq];
       })
       .with(
-        { devefi_jes1_tcyclesredeem: P.select() },
+        { devefi_jes1_ntcredeem: P.select() },
         (c): CreateNodeRequest => {
           let req: CommonCreateRequest = {
             controllers: [{ owner: this.me.getPrincipal(), subaccount: [] }],
@@ -272,7 +284,7 @@ export class Manager {
               [{ ic: { owner: this.testCanisterId, subaccount: [] } }],
             ],
             refund: { owner: this.me.getPrincipal(), subaccount: [] },
-            ledgers: [{ ic: CYCLES_LEDGER_CANISTER_ID }],
+            ledgers: [{ ic: NTC_LEDGER_CANISTER_ID }],
             sources: [],
             extractors: [],
             affiliate: [],
@@ -283,7 +295,7 @@ export class Manager {
           };
 
           let creq: CreateRequest = {
-            devefi_jes1_tcyclesredeem: {},
+            devefi_jes1_ntcredeem: {},
           };
 
           return [req, creq];
@@ -291,7 +303,7 @@ export class Manager {
       )
       .exhaustive();
 
-    let resp = await this.tcyclesTestPylon.icrc55_command({
+    let resp = await this.ntcTestPylon.icrc55_command({
       expire_at: [],
       request_id: [],
       controller: { owner: this.me.getPrincipal(), subaccount: [] },
@@ -309,7 +321,7 @@ export class Manager {
   }
 
   public async deleteNode(nodeId: number) {
-    let resp = await this.tcyclesTestPylon.icrc55_command({
+    let resp = await this.ntcTestPylon.icrc55_command({
       expire_at: [],
       request_id: [],
       controller: { owner: this.me.getPrincipal(), subaccount: [] },
@@ -327,7 +339,7 @@ export class Manager {
   }
 
   public async getNode(nodeId: NodeId): Promise<GetNodeResponse> {
-    let resp = await this.tcyclesTestPylon.icrc55_get_nodes([{ id: nodeId }]);
+    let resp = await this.ntcTestPylon.icrc55_get_nodes([{ id: nodeId }]);
     if (resp[0][0] === undefined) throw new Error("Node not found");
     return resp[0][0];
   }
@@ -377,12 +389,12 @@ export class Manager {
       subaccount: [],
     });
 
-    let tcycles = await this.cyclesLedgerActor.icrc1_balance_of({
+    let ntc = await this.ntcLedgerActor.icrc1_balance_of({
       owner: this.me.getPrincipal(),
       subaccount: [],
     });
 
-    return { icrc_tokens: icrc, icp_tokens: icp, tcycles_tokens: tcycles };
+    return { icrc_tokens: icrc, icp_tokens: icp, ntc_tokens: ntc };
   }
 
   public async getBillingBalances() {
@@ -400,12 +412,12 @@ export class Manager {
       subaccount: [],
     });
 
-    let tcycles = await this.cyclesLedgerActor.icrc1_balance_of({
+    let ntc = await this.ntcLedgerActor.icrc1_balance_of({
       owner: author,
       subaccount: [],
     });
 
-    return { icrc_tokens: icrc, icp_tokens: icp, tcycles_tokens: tcycles };
+    return { icrc_tokens: icrc, icp_tokens: icp, ntc_tokens: ntc };
   }
 
   public getNodeSourceAccount(node: NodeShared, port: number): Account {
@@ -424,10 +436,10 @@ export class Manager {
 
   public getNodeCustom(node: NodeShared): Shared__1 {
     return match(node.custom[0])
-      .with({ devefi_jes1_tcyclesmint: P.select() }, (shared): Shared__1 => {
+      .with({ devefi_jes1_ntcmint: P.select() }, (shared): Shared__1 => {
         return shared;
       })
-      .with({ devefi_jes1_tcyclesredeem: P.select() }, (shared): Shared__1 => {
+      .with({ devefi_jes1_ntcredeem: P.select() }, (shared): Shared__1 => {
         return shared;
       })
       .exhaustive();
@@ -462,8 +474,8 @@ export class Manager {
   }
 
   public async pylonDebug(): Promise<void> {
-    const info = await this.tcyclesTestPylon.get_ledgers_info();
-    const errs = await this.tcyclesTestPylon.get_ledger_errors();
+    const info = await this.ntcTestPylon.get_ledgers_info();
+    const errs = await this.ntcTestPylon.get_ledger_errors();
 
     console.log("ICRC Ledger ID:", info[0].id.toString());
     //@ts-ignore
@@ -473,9 +485,9 @@ export class Manager {
     //@ts-ignore
     console.log("ICP Ledger info:", info[1].info.icp);
 
-    console.log("Cycles Ledger ID:", info[2].id.toString());
+    console.log("NTC Ledger ID:", info[2].id.toString());
     //@ts-ignore
-    console.log("Cycles Ledger info:", info[2].info.icrc);
+    console.log("NTC Ledger info:", info[2].info.icrc);
 
     console.log("Errors in ledgers:", errs);
   }

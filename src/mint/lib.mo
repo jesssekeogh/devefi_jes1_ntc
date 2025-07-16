@@ -4,11 +4,13 @@ import Principal "mo:base/Principal";
 import Nat64 "mo:base/Nat64";
 import Error "mo:base/Error";
 import Option "mo:base/Option";
+import Buffer "mo:base/Buffer";
 import Core "mo:devefi/core";
+import U "mo:devefi/utils";
 import Ver1 "./memory/v1";
 import I "./interface";
-import NodeUtils "./utils/node";
-import TcycleMinterInterface "./interfaces/tcycle_minter";
+import NtcMinterInterface "../interfaces/ntc_minter";
+import CyclesMintingInterface "../interfaces/cycles_minting";
 
 module {
     let T = Core.VectorModule;
@@ -23,9 +25,8 @@ module {
 
     let M = Mem.Vector.V1;
 
-    public let ID = "devefi_jes1_tcyclesmint";
+    public let ID = "devefi_jes1_ntcmint";
 
-    // need dvf here
     public class Mod({
         xmem : MU.MemShell<M.Mem>;
         core : Core.Mod;
@@ -37,36 +38,37 @@ module {
 
         let IcpLedger = Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai");
 
-        // let CyclesLedger = Principal.fromText("um5iw-rqaaa-aaaaq-qaaba-cai");
+        let CmcMinter = actor ("rkp4c-7iaaa-aaaaa-aaaca-cai") : CyclesMintingInterface.Self;
 
-        // TESTING ENVIRONMENT: Using a mock/test Cycles Ledger canister
-        // This is a temporary test canister ID for development purposes
-        // Replace before deploying to production environment
-        let CyclesLedger = Principal.fromText("7tjcv-pp777-77776-qaaaa-cai");
+        // PRODUCTION ENVIRONMENT (uncomment for production deployment):
 
-        let TcycleMinter = actor ("oaez2-oaaaa-aaaaa-qbkmq-cai") : TcycleMinterInterface.Self;
-
-        // TODO: add testing environment TcycleMinter canister ID
+        // let NtcLedger = Principal.fromText("production-ntc-ledger-id");
+        // let NtcMinter = actor ("production-ntc-minter-id") : NtcMinterInterface.Self;
+        
+        // TESTING ENVIRONMENT (comment out for production):
+        
+        let NtcLedger = Principal.fromText("ueyo2-wx777-77776-aaatq-cai");
+        let NtcMinter = actor ("udzio-3p777-77776-aaata-cai") : NtcMinterInterface.Self;
 
         let MINIMUM_MINT : Nat = 100_000_000; // 1 ICP
 
         public func meta() : T.Meta {
             {
                 id = ID;
-                name = "Mint TCYCLES";
+                name = "Mint NTC";
                 author = "jes1";
-                description = "Mint TCYCLES from ICP";
-                supported_ledgers = [#ic(IcpLedger), #ic(CyclesLedger)];
+                description = "Mint NTC from ICP";
+                supported_ledgers = [#ic(IcpLedger), #ic(NtcLedger)];
                 version = #beta([0, 1, 0]);
                 create_allowed = true;
                 ledger_slots = [
                     "MINT",
-                    "TCYCLES",
+                    "NTC",
                 ];
                 billing = [
                     {
                         cost_per_day = 0;
-                        transaction_fee = #flat_fee_multiplier(100);
+                        transaction_fee = #flat_fee_multiplier(500); // 0.05 NTC
                     },
                 ];
                 sources = sources(0);
@@ -104,7 +106,7 @@ module {
 
         module Run {
             public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : () {
-                // Forward icp to the tcycle minter
+                // Forward icp to the ntc minter
                 let ?sourceMint = core.getSource(vid, vec, 0) else return;
                 let mintBal = core.Source.balance(sourceMint);
                 let mintFee = core.Source.fee(sourceMint);
@@ -115,8 +117,8 @@ module {
                     let #ok(intent) = core.Source.Send.intent(
                         sourceMint,
                         #external_account({
-                            owner = Principal.fromActor(TcycleMinter);
-                            subaccount = sourceToAccount.subaccount; // this is where the tcycles will be sent
+                            owner = Principal.fromActor(CmcMinter);
+                            subaccount = sourceToAccount.subaccount;
                         }),
                         mintBal,
                     ) else return;
@@ -126,7 +128,7 @@ module {
                     NodeUtils.tx_sent(nodeMem, txId);
                 };
 
-                // Forward tcycles to the destination
+                // Forward ntc to the destination
                 let ?sourceTo = core.getSource(vid, vec, 1) else return;
                 let toBal = core.Source.balance(sourceTo);
                 let toFee = core.Source.fee(sourceTo);
@@ -144,7 +146,7 @@ module {
 
             public func singleAsync(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : async* () {
                 try {
-                    await* CycleMintingActions.mint_tcycles(nodeMem, vid, vec);
+                    await* NtcMintingActions.mint_ntc(nodeMem, vid, vec);
                 } catch (err) {
                     NodeUtils.log_activity(nodeMem, "async_cycle", #Err(Error.message(err)));
                 } finally {
@@ -201,26 +203,80 @@ module {
             [(1, "To")];
         };
 
-        module CycleMintingActions {
-            public func mint_tcycles(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
+        module NtcMintingActions {
+            // TODO use the new onSent and then mint cycles to this canister and send with cycles to the minter
+            public func mint_ntc(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
                 let ?refreshIdx = nodeMem.internals.refresh_idx else return;
                 let ?{ cls = #icp(ledger) } = core.get_ledger_cls(IcpLedger) else return;
                 let ?{ subaccount = ?subaccount } = core.getSourceAccountIC(vec, 1) else return;
 
                 if (ledger.isSent(refreshIdx)) {
-                    switch (await TcycleMinter.mint_tcycles({ to_subaccount = subaccount })) {
-                        case (#Ok(_)) {
-                            if (Option.equal(?refreshIdx, nodeMem.internals.refresh_idx, Nat64.equal)) {
-                                nodeMem.internals.refresh_idx := null;
-                            };
+                    // switch (await NtcMinter.mint_tcycles({ to_subaccount = subaccount })) {
+                    //     case (#Ok(_)) {
+                    //         if (Option.equal(?refreshIdx, nodeMem.internals.refresh_idx, Nat64.equal)) {
+                    //             nodeMem.internals.refresh_idx := null;
+                    //         };
 
-                            NodeUtils.log_activity(nodeMem, "mint_tcycles", #Ok());
-                        };
-                        case (#Err(err)) {
-                            NodeUtils.log_activity(nodeMem, "mint_tcycles", #Err(debug_show err));
+                    //         NodeUtils.log_activity(nodeMem, "mint_ntc", #Ok());
+                    //     };
+                    //     case (#Err(err)) {
+                    //         NodeUtils.log_activity(nodeMem, "mint_ntc", #Err(debug_show err));
+                    //     };
+                    // };
+                };
+            };
+        };
+
+        module NodeUtils {
+            public func node_ready(nodeMem : Ver1.NodeMem) : Bool {
+                let timeout : Nat64 = (3 * 60 * 1_000_000_000); // 3 mins
+
+                if (Option.isNull(nodeMem.internals.refresh_idx)) return false;
+
+                switch (nodeMem.internals.updating) {
+                    case (#Init) {
+                        nodeMem.internals.updating := #Calling(U.now());
+                        return true;
+                    };
+                    case (#Calling(_)) {
+                        return false; // If already in Calling state, do not proceed
+                    };
+                    case (#Done(ts)) {
+                        if (U.now() >= ts + timeout) {
+                            nodeMem.internals.updating := #Calling(U.now());
+                            return true;
+                        } else {
+                            return false;
                         };
                     };
                 };
+            };
+
+            public func node_done(nodeMem : Ver1.NodeMem) : () {
+                nodeMem.internals.updating := #Done(U.now());
+            };
+
+            public func tx_sent(nodeMem : Ver1.NodeMem, txId : Nat64) : () {
+                nodeMem.internals.refresh_idx := ?txId;
+            };
+
+            public func log_activity(nodeMem : Ver1.NodeMem, operation : Text, result : { #Ok; #Err : Text }) : () {
+                let log = Buffer.fromArray<Ver1.Activity>(nodeMem.log);
+
+                switch (result) {
+                    case (#Ok(())) {
+                        log.add(#Ok({ operation = operation; timestamp = U.now() }));
+                    };
+                    case (#Err(msg)) {
+                        log.add(#Err({ operation = operation; msg = msg; timestamp = U.now() }));
+                    };
+                };
+
+                if (log.size() > 10) {
+                    ignore log.remove(0); // remove 1 item from the beginning
+                };
+
+                nodeMem.log := Buffer.toArray(log);
             };
         };
     };

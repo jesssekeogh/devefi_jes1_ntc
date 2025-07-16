@@ -9,8 +9,8 @@ import T "./vector_modules";
 import MU_sys "mo:devefi/sys";
 import Chrono "mo:chronotrinite/client";
 import Core "mo:devefi/core";
-import TcyclesMintVector "../../src/Mint";
-import TcyclesRedeemVector "../../src/Redeem";
+import NtcMintVector "../../src/mint";
+import NtcRedeemVector "../../src/redeem";
 
 shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
 
@@ -45,11 +45,11 @@ shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
 
     let test_icrc : Principal = Principal.fromText("tqzl2-p7777-77776-aaaaa-cai"); // Test ICRC ledger
     let icp_ledger = Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai");
-    let cycles_ledger = Principal.fromText("7tjcv-pp777-77776-qaaaa-cai");
+    let ntc_ledger = Principal.fromText("ueyo2-wx777-77776-aaatq-cai");
 
     dvf.add_ledger<system>(test_icrc, #icrc);
     dvf.add_ledger<system>(icp_ledger, #icp);
-    dvf.add_ledger<system>(cycles_ledger, #icrc);
+    dvf.add_ledger<system>(ntc_ledger, #icrc);
     
     let billing : ICRC55.BillingPylon = {
         ledger = test_icrc;
@@ -77,7 +77,7 @@ shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
         xmem = mem_core_1;
         settings = {
             BILLING = billing;
-            PYLON_NAME = "NNS Vector Test";
+            PYLON_NAME = "NTC Test PYLON";
             PYLON_GOVERNED_BY = "";
             TEMP_NODE_EXPIRATION_SEC = 3600;
             MAX_INSTRUCTIONS_PER_HEARTBEAT = 300_000_000;
@@ -89,22 +89,22 @@ shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
     });
 
     // Components
-    stable let mem_vec_tcyclesmint_1 = TcyclesMintVector.Mem.Vector.V1.new();
-    stable let mem_vec_tcyclesredeem_1 = TcyclesRedeemVector.Mem.Vector.V1.new();
+    stable let mem_vec_ntcmint_1 = NtcMintVector.Mem.Vector.V1.new();
+    stable let mem_vec_ntcredeem_1 = NtcRedeemVector.Mem.Vector.V1.new();
 
-    let devefi_jes1_tcyclesmint = TcyclesMintVector.Mod({
-        xmem = mem_vec_tcyclesmint_1;
+    let devefi_jes1_ntcmint = NtcMintVector.Mod({
+        xmem = mem_vec_ntcmint_1;
         core;
     });
 
-    let devefi_jes1_tcyclesredeem = TcyclesRedeemVector.Mod({
-        xmem = mem_vec_tcyclesredeem_1;
+    let devefi_jes1_ntcredeem = NtcRedeemVector.Mod({
+        xmem = mem_vec_ntcredeem_1;
         core;
     });
 
     let vmod = T.VectorModules({
-        devefi_jes1_tcyclesmint;
-        devefi_jes1_tcyclesredeem;
+        devefi_jes1_ntcmint;
+        devefi_jes1_ntcredeem;
     });
 
     let sys = MU_sys.Mod<system, T.CreateRequest, T.Shared, T.ModifyRequest>({
@@ -115,11 +115,10 @@ shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
         me_can;
     });
 
-    private func proc() { devefi_jes1_tcyclesmint.run() };
+    private func proc() { devefi_jes1_ntcmint.run() };
 
     private func async_proc() : async* () {
-        await* devefi_jes1_tcyclesmint.runAsync();
-        await* devefi_jes1_tcyclesredeem.runAsync();
+        await* devefi_jes1_ntcmint.runAsync();
     };
 
     ignore Timer.recurringTimer<system>(

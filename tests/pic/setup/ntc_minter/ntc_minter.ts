@@ -2,20 +2,17 @@ import { resolve } from "node:path";
 import { PocketIc } from "@dfinity/pic";
 import { IDL } from "@dfinity/candid";
 import {
-  _SERVICE as TCYCLESTESTPYLON,
+  _SERVICE as NTCTESTMINTER,
   idlFactory,
   init as PylonInit,
-} from "./declarations/tcycles_test_pylon.did.js";
+} from "./declarations/ntc_minter.did.js";
 
-const WASM_PATH = resolve(
-  __dirname,
-  "../tcycles_test_pylon/tcycles_test_pylon.wasm.gz"
-);
+const WASM_PATH = resolve(__dirname, "../ntc_minter/ntc_minter.wasm.gz");
 
-export async function TcyclesTestPylon(pic: PocketIc) {
+export async function NtcTestMinter(pic: PocketIc) {
   const subnets = await pic.getApplicationSubnets();
 
-  const fixture = await pic.setupCanister<TCYCLESTESTPYLON>({
+  const fixture = await pic.setupCanister<NTCTESTMINTER>({
     idlFactory,
     wasm: WASM_PATH,
     arg: IDL.encode(PylonInit({ IDL }), []),
@@ -25,4 +22,4 @@ export async function TcyclesTestPylon(pic: PocketIc) {
   return fixture;
 }
 
-export default TcyclesTestPylon;
+export default NtcTestMinter;

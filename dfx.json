@@ -1,15 +1,15 @@
 {
   "canisters": {
-    "tcycles_test_pylon": {
+    "ntc_test_pylon": {
       "main": "tests/pylon/main.mo",
       "type": "motoko",
       "gzip": true,
       "declarations": {
         "node_compatibility": true,
-        "output": "tests/pic/setup/tcycles_test_pylon/declarations"
+        "output": "tests/pic/setup/ntc_test_pylon/declarations"
       },
       "post_install": [
-        "cp .dfx/ic/canisters/tcycles_test_pylon/tcycles_test_pylon.wasm.gz tests/pic/setup/tcycles_test_pylon"
+        "cp .dfx/ic/canisters/ntc_test_pylon/ntc_test_pylon.wasm.gz tests/pic/setup/ntc_test_pylon"
       ]
     },
     "router": {
@@ -24,16 +24,16 @@
         "cp .dfx/ic/canisters/router/router.wasm.gz tests/pic/setup/router"
       ]
     },
-    "tcycles_minter": {
-      "main": "tcycles_minter/main.mo",
+    "ntc_minter": {
+      "main": "tests/ntc_minter/main.mo",
       "type": "motoko",
       "gzip": true,
       "declarations": {
         "node_compatibility": true,
-        "output": "tests/pic/setup/tcycles_minter/declarations"
+        "output": "tests/pic/setup/ntc_minter/declarations"
       },
       "post_install": [
-        "cp .dfx/ic/canisters/tcycles_minter/tcycles_minter.wasm.gz tests/pic/setup/tcycles_minter"
+        "cp .dfx/ic/canisters/ntc_minter/ntc_minter.wasm.gz tests/pic/setup/ntc_minter"
       ]
     }
   },

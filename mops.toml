@@ -1,9 +1,9 @@
 [package]
-name = "devefi-jes1-tcycles"
+name = "devefi-jes1-ntc"
 version = "0.1.0"
-description = "Mint TCYCLES from ICP and Redeem TCYCLES for cycles"
-repository = "https://github.com/jesssekeogh/devefi_jes1_cycles"
-keywords = [ "devefi", "tcycles", "redeem", "mint" ]
+description = "Mint NTC from ICP and Redeem NTC for cycles"
+repository = "https://github.com/jesssekeogh/devefi_jes1_ntc"
+keywords = [ "devefi", "ntc", "redeem", "mint" ]
 license = ""
 
 [dependencies]

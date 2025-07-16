@@ -1,14 +1,15 @@
 import MU "mo:mosup";
 import Map "mo:map/Map";
 import Principal "mo:base/Principal";
-import Nat64 "mo:base/Nat64";
-import Error "mo:base/Error";
 import Option "mo:base/Option";
+import Blob "mo:base/Blob";
+import Iter "mo:base/Iter";
+import Nat8 "mo:base/Nat8";
+import IterTools "mo:itertools/Iter";
 import Core "mo:devefi/core";
 import Ver1 "./memory/v1";
 import I "./interface";
-import NodeUtils "./utils/node";
-import TcycleMinterInterface "./interfaces/tcycle_minter";
+import NtcMinterInterface "../interfaces/ntc_minter";
 
 module {
     let T = Core.VectorModule;
@@ -23,7 +24,7 @@ module {
 
     let M = Mem.Vector.V1;
 
-    public let ID = "devefi_jes1_tcyclesredeem";
+    public let ID = "devefi_jes1_ntcredeem";
 
     public class Mod({
         xmem : MU.MemShell<M.Mem>;
@@ -34,26 +35,29 @@ module {
 
         public type NodeMem = Ver1.NodeMem;
 
-        // let CyclesLedger = Principal.fromText("um5iw-rqaaa-aaaaq-qaaba-cai");
+        // PRODUCTION ENVIRONMENT (uncomment for production deployment):
 
-        // TESTING ENVIRONMENT: Using a mock/test Cycles Ledger canister
-        // This is a temporary test canister ID for development purposes
-        // Replace before deploying to production environment
-        let CyclesLedger = Principal.fromText("7tjcv-pp777-77776-qaaaa-cai");
+        // let NtcLedger = Principal.fromText("production-ntc-ledger-id");
+        // let NtcMinter = actor ("production-ntc-minter-id") : NtcMinterInterface.Self;
 
-        let TcycleMinter = actor ("oaez2-oaaaa-aaaaa-qbkmq-cai") : TcycleMinterInterface.Self;
+        // TESTING ENVIRONMENT (comment out for production):
+
+        let NtcLedger = Principal.fromText("ueyo2-wx777-77776-aaatq-cai");
+        let NtcMinter = actor ("udzio-3p777-77776-aaata-cai") : NtcMinterInterface.Self;
+
+        let MINIMUM_REDEEM : Nat = 1_0000_0000_0000; // 1 NTC
 
         public func meta() : T.Meta {
             {
                 id = ID;
-                name = "Redeem TCYCLES";
+                name = "Redeem NTC";
                 author = "jes1";
-                description = "Redeem TCYCLES for CYCLES";
-                supported_ledgers = [#ic(CyclesLedger)];
+                description = "Redeem NTC for CYCLES";
+                supported_ledgers = [#ic(NtcLedger)];
                 version = #beta([0, 1, 0]);
                 create_allowed = true;
                 ledger_slots = [
-                    "TCYCLES"
+                    "REDEEM"
                 ];
                 billing = [];
                 sources = sources(0);
@@ -76,51 +80,26 @@ module {
             };
         };
 
-        public func runAsync() : async* () {
-            label vec_loop for ((vid, nodeMem) in Map.entries(mem.main)) {
-                let ?vec = core.getNodeById(vid) else continue vec_loop;
-                if (not vec.active) continue vec_loop;
-                if (vec.billing.frozen) continue vec_loop;
-                if (Option.isSome(vec.billing.expires)) continue vec_loop;
-                if (NodeUtils.node_ready(nodeMem)) {
-                    await* Run.singleAsync(vid, vec, nodeMem);
-                    return; // return after finding the first ready node
-                };
-            };
-        };
-
         module Run {
             public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : () {
                 let ?sourceRedeem = core.getSource(vid, vec, 0) else return;
                 let redeemBal = core.Source.balance(sourceRedeem);
                 let redeemFee = core.Source.fee(sourceRedeem);
 
-                if (redeemBal > redeemFee) {
+                if (redeemBal > redeemFee + MINIMUM_REDEEM) {
                     let ?redeemCanister = core.getDestinationAccountIC(vec, 0) else return;
                     if (Option.isSome(redeemCanister.subaccount)) return; // can't send cycles to subaccounts
 
                     let #ok(intent) = core.Source.Send.intent(
                         sourceRedeem,
                         #external_account({
-                            owner = Principal.fromActor(TcycleMinter);
-                            subaccount = ?Principal.toLedgerAccount(redeemCanister.owner, null);
+                            owner = Principal.fromActor(NtcMinter);
+                            subaccount = ?NtcRedeemActions.canisterToSubaccount(redeemCanister.owner);
                         }),
                         redeemBal,
                     ) else return;
 
-                    let txId = core.Source.Send.commit(intent);
-
-                    NodeUtils.tx_sent(nodeMem, txId);
-                };
-            };
-
-            public func singleAsync(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : async* () {
-                try {
-                    await* CycleLedgerActions.redeem_tcycles(nodeMem, vid, vec);
-                } catch (err) {
-                    NodeUtils.log_activity(nodeMem, "async_cycle", #Err(Error.message(err)));
-                } finally {
-                    NodeUtils.node_done(nodeMem);
+                    ignore core.Source.Send.commit(intent);
                 };
             };
         };
@@ -173,28 +152,17 @@ module {
             [(0, "Canister")];
         };
 
-        module CycleLedgerActions {
-            public func redeem_tcycles(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
-                let ?refreshIdx = nodeMem.internals.refresh_idx else return;
-                let ?redeemCanister = core.getDestinationAccountIC(vec, 0) else return;
-                if (Option.isSome(redeemCanister.subaccount)) return; // can't send cycles to subaccounts
-                let ?{ cls = #icp(ledger) } = core.get_ledger_cls(CyclesLedger) else return;
+        module NtcRedeemActions = {
+            public func canisterToSubaccount(canister_id : Principal) : Blob {
+                // Convert principal to array of Nat8
+                let arr = Principal.toBlob(canister_id) |> Blob.toArray(_);
 
-                if (ledger.isSent(refreshIdx)) {
-                    switch (await TcycleMinter.redeem_tcycles({ to_canister = redeemCanister.owner })) {
-                        case (#Ok(_)) {
-                            if (Option.equal(?refreshIdx, nodeMem.internals.refresh_idx, Nat64.equal)) {
-                                nodeMem.internals.refresh_idx := null;
-                            };
-
-                            NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Ok());
-                        };
-                        case (#Err(err)) {
-                            NodeUtils.log_activity(nodeMem, "redeem_tcycles", #Err(debug_show err));
-                        };
-                    };
-                };
-
+                // Prepend length and pad to 32 bytes, then convert back to Blob
+                Iter.fromArray(arr)
+                |> IterTools.prepend(Nat8.fromNat(arr.size()), _)
+                |> IterTools.pad<Nat8>(_, 32, 0)
+                |> Iter.toArray(_)
+                |> Blob.fromArray(_);
             };
         };
     };

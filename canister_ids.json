@@ -1,11 +1,11 @@
 {
-  "tcycles_test_pylon": {
+  "ntc_test_pylon": {
     "ic": "7cotl-6aaaa-aaaam-ade2q-cai"
   },
   "router": {
     "ic": "2powo-ziaaa-aaaar-qaila-cai"
   },
-  "tcycles_minter": {
+  "ntc_minter": {
     "ic": "oaez2-oaaaa-aaaaa-qbkmq-cai"
   }
 }
