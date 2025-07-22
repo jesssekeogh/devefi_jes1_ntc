@@ -21,10 +21,7 @@ import {
 } from "./nns/ledger";
 import { Actor, PocketIc, createIdentity, SubnetStateType } from "@dfinity/pic";
 import { Principal } from "@dfinity/principal";
-import {
-  ICP_LEDGER_CANISTER_ID,
-  NTC_LEDGER_CANISTER_ID,
-} from "./constants.ts";
+import { ICP_LEDGER_CANISTER_ID, NTC_LEDGER_CANISTER_ID } from "./constants.ts";
 import { NtcTestPylon, ICRCLedger, NtcMinter, NtcLedger } from "./index";
 import { minterIdentity } from "./nns/identity.ts";
 import { NNS_STATE_PATH } from "./constants.ts";
@@ -91,17 +88,13 @@ export class Manager {
     // setup chrono router
     // we are not testing the router here, but we need it to spin up a pylon
     // pass time to allow router to setup slices
-    const router = await Router(pic);
+    await Router(pic);
     await pic.advanceTime(240 * 60 * 1000);
     await pic.tick(240);
 
+    const minterFixture = await NtcMinter(pic);
 
-    const minter = await NtcMinter(pic);
-
-    let ntcLedgerFixture = await NtcLedger(pic, minter.canisterId);
-
-    // setup vector
-    let pylonFixture = await NtcTestPylon(pic);
+    let ntcLedgerFixture = await NtcLedger(pic, minterFixture.canisterId);
 
     let testCanister = await pic.createCanister();
 
@@ -124,6 +117,9 @@ export class Manager {
       created_at_time: [],
     });
 
+    // setup vector
+    let pylonFixture = await NtcTestPylon(pic);
+
     return new Manager(
       pic,
       identity,
@@ -131,7 +127,7 @@ export class Manager {
       icrcFixture.actor,
       icpLedgerActor,
       ntcLedgerFixture.actor,
-      minter.actor,
+      minterFixture.actor,
       testCanister
     );
   }
@@ -247,7 +243,13 @@ export class Manager {
     );
 
     await this.advanceBlocksAndTimeMinutes(3);
-
+    console.log(await this.pylonDebug());
+    console.log(
+      await this.ntcTestPylon.icrc55_accounts({
+        owner: this.me.getPrincipal(),
+        subaccount: [],
+      })
+    );
     const reqType: CreateNodeRequest = match(nodeType)
       .with({ devefi_jes1_ntcmint: P.select() }, (c): CreateNodeRequest => {
         let req: CommonCreateRequest = {
@@ -258,7 +260,7 @@ export class Manager {
           refund: { owner: this.me.getPrincipal(), subaccount: [] },
           ledgers: [
             { ic: ICP_LEDGER_CANISTER_ID },
-            { ic: NTC_LEDGER_CANISTER_ID }, // second ledger needs to be cycles ledger
+            { ic: NTC_LEDGER_CANISTER_ID }, // second ledger needs to be ntc ledger
           ],
           sources: [],
           extractors: [],
@@ -275,32 +277,29 @@ export class Manager {
 
         return [req, creq];
       })
-      .with(
-        { devefi_jes1_ntcredeem: P.select() },
-        (c): CreateNodeRequest => {
-          let req: CommonCreateRequest = {
-            controllers: [{ owner: this.me.getPrincipal(), subaccount: [] }],
-            destinations: [
-              [{ ic: { owner: this.testCanisterId, subaccount: [] } }],
-            ],
-            refund: { owner: this.me.getPrincipal(), subaccount: [] },
-            ledgers: [{ ic: NTC_LEDGER_CANISTER_ID }],
-            sources: [],
-            extractors: [],
-            affiliate: [],
-            temporary: false,
-            billing_option: 0n,
-            initial_billing_amount: [],
-            temp_id: 0,
-          };
+      .with({ devefi_jes1_ntcredeem: P.select() }, (c): CreateNodeRequest => {
+        let req: CommonCreateRequest = {
+          controllers: [{ owner: this.me.getPrincipal(), subaccount: [] }],
+          destinations: [
+            [{ ic: { owner: this.testCanisterId, subaccount: [] } }],
+          ],
+          refund: { owner: this.me.getPrincipal(), subaccount: [] },
+          ledgers: [{ ic: NTC_LEDGER_CANISTER_ID }],
+          sources: [],
+          extractors: [],
+          affiliate: [],
+          temporary: false,
+          billing_option: 0n,
+          initial_billing_amount: [],
+          temp_id: 0,
+        };
 
-          let creq: CreateRequest = {
-            devefi_jes1_ntcredeem: {},
-          };
+        let creq: CreateRequest = {
+          devefi_jes1_ntcredeem: {},
+        };
 
-          return [req, creq];
-        }
-      )
+        return [req, creq];
+      })
       .exhaustive();
 
     let resp = await this.ntcTestPylon.icrc55_command({
@@ -441,20 +440,6 @@ export class Manager {
       })
       .with({ devefi_jes1_ntcredeem: P.select() }, (shared): Shared__1 => {
         return shared;
-      })
-      .exhaustive();
-  }
-
-  public checkNodeUpdatingDone(shared: Shared__1): bigint | null {
-    return match(shared.internals.updating)
-      .with({ Init: P.select() }, (): null => {
-        return null;
-      })
-      .with({ Calling: P.select() }, (): null => {
-        return null;
-      })
-      .with({ Done: P.select() }, (timestamp): bigint => {
-        return timestamp;
       })
       .exhaustive();
   }

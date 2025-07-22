@@ -5,7 +5,6 @@ import Option "mo:base/Option";
 import Core "mo:devefi/core";
 import Ver1 "./memory/v1";
 import I "./interface";
-import NtcMinterInterface "../interfaces/ntc_minter";
 import Utils "../utils/Utils";
 
 module {
@@ -35,12 +34,12 @@ module {
         // PRODUCTION ENVIRONMENT (uncomment for production deployment):
 
         // let NtcLedger = Principal.fromText("production-ntc-ledger-id");
-        // let NtcMinter = actor ("production-ntc-minter-id") : NtcMinterInterface.Self;
+        // let NtcMinter = Principal.fromText("production-ntc-minter-id");
 
         // TESTING ENVIRONMENT (comment out for production):
 
         let NtcLedger = Principal.fromText("ueyo2-wx777-77776-aaatq-cai");
-        let NtcMinter = actor ("udzio-3p777-77776-aaata-cai") : NtcMinterInterface.Self;
+        let NtcMinter = Principal.fromText("udzio-3p777-77776-aaata-cai");
 
         let MINIMUM_REDEEM : Nat = 1_0000_0000_0000; // 1 NTC
 
@@ -89,11 +88,12 @@ module {
 
                     let #ok(intent) = core.Source.Send.intent(
                         sourceRedeem,
-                        #external_account({
-                            owner = Principal.fromActor(NtcMinter);
+                        #external_account(#icrc({
+                            owner = NtcMinter;
                             subaccount = ?Utils.principalToSubaccount(redeemCanister.owner);
-                        }),
+                        })),
                         redeemBal,
+                        null,
                     ) else return;
 
                     ignore core.Source.Send.commit(intent);
@@ -103,11 +103,7 @@ module {
 
         public func create(vid : T.NodeId, _req : T.CommonCreateRequest, _t : I.CreateRequest) : T.Create {
             let nodeMem : NodeMem = {
-                internals = {
-                    var updating = #Init;
-                    var refresh_idx = null;
-                };
-                var log = [];
+                internals = {};
             };
             ignore Map.put(mem.main, Map.n32hash, vid, nodeMem);
             #ok(ID);
@@ -128,14 +124,10 @@ module {
         };
 
         public func get(vid : T.NodeId, _vec : T.NodeCoreMem) : T.Get<I.Shared> {
-            let ?t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
+            let ?_t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
 
             #ok {
-                internals = {
-                    updating = t.internals.updating;
-                    refresh_idx = t.internals.refresh_idx;
-                };
-                log = t.log;
+                internals = {};
             };
         };
 

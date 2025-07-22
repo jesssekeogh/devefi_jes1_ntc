@@ -12,22 +12,6 @@ module {
     });
 
     public type NodeMem = {
-        internals : {
-            var updating : UpdatingStatus;
-            var refresh_idx : ?Nat64;
-        };
-        var log : [Activity];
+        internals : {};
     };
-
-    public type UpdatingStatus = {
-        #Init;
-        #Calling : Nat64;
-        #Done : Nat64;
-    };
-
-    public type Activity = {
-        #Ok : { operation : Text; timestamp : Nat64 };
-        #Err : { operation : Text; msg : Text; timestamp : Nat64 };
-    };
-
 };

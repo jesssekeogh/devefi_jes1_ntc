@@ -11,24 +11,9 @@ module {
         main = Map.new<Nat32, NodeMem>();
     });
 
-    // placeholders for if we want to add more adavnced functionality
+    // placeholders for if we want to add more adavnced async functionality later
     public type NodeMem = {
-        internals : {
-            var updating : UpdatingStatus;
-            var refresh_idx : ?Nat64;
-        };
-        var log : [Activity];
-    };
-
-    public type UpdatingStatus = {
-        #Init;
-        #Calling : Nat64;
-        #Done : Nat64;
-    };
-
-    public type Activity = {
-        #Ok : { operation : Text; timestamp : Nat64 };
-        #Err : { operation : Text; msg : Text; timestamp : Nat64 };
+        internals : {};
     };
 
 };
