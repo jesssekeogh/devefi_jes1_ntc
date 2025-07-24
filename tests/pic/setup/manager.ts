@@ -85,6 +85,8 @@ export class Manager {
     // setup ICRC
     let icrcFixture = await ICRCLedger(pic, identity.getPrincipal());
 
+    let ntcLedgerFixture = await NtcLedger(pic);
+
     // setup chrono router
     // we are not testing the router here, but we need it to spin up a pylon
     // pass time to allow router to setup slices
@@ -93,8 +95,6 @@ export class Manager {
     await pic.tick(240);
 
     const minterFixture = await NtcMinter(pic);
-
-    let ntcLedgerFixture = await NtcLedger(pic, minterFixture.canisterId);
 
     let testCanister = await pic.createCanister();
 
@@ -119,6 +119,12 @@ export class Manager {
 
     // setup vector
     let pylonFixture = await NtcTestPylon(pic);
+
+    console.log("Pylon canister Id", pylonFixture.canisterId.toString());
+    // console.log("Minter canister Id", minterFixture.canisterId.toString());
+    // console.log("NTC Ledger canister Id", ntcLedgerFixture.canisterId.toString());
+    // console.log("ICRC Ledger canister Id", icrcFixture.canisterId.toString());
+    // console.log("Router canister Id", routerFixture.canisterId.toString());
 
     return new Manager(
       pic,
@@ -160,13 +166,17 @@ export class Manager {
     return this.ntcLedgerActor;
   }
 
+  public async getCyclesBalance(canisterId: Principal): Promise<number> {
+    return await this.pic.getCyclesBalance(canisterId);
+  }
+
   public async getNow(): Promise<bigint> {
     let time = await this.pic.getTime();
     return BigInt(Math.trunc(time));
   }
 
-  public async advanceTime(mins: number): Promise<void> {
-    await this.pic.advanceTime(mins * 60 * 1000);
+  public async advanceTime(seconds: number): Promise<void> {
+    await this.pic.advanceTime(seconds * 1000);
   }
 
   public async advanceBlocks(blocks: number): Promise<void> {
@@ -174,49 +184,19 @@ export class Manager {
   }
 
   // used for when a refresh is pending on a node
-  public async advanceBlocksAndTimeMinutes(rounds: number): Promise<void> {
-    let mins = 10; // 10 mins
-    let blocks = 10;
-    for (let i = 0; i < rounds; i++) {
-      await this.pic.advanceTime(mins * 60 * 1000);
-      await this.pic.tick(blocks);
-    }
-  }
-
-  public async advanceBlocksAndTimeHours(rounds: number): Promise<void> {
-    const sixHoursMins = 6 * 60; // 6 hours
-    const shortIntervalMins = 10; // 10 minutes
-    const blocksForSixHours = 10; // Blocks for 6 hours
-    const blocksForShortInterval = 5; // Blocks for 10 minutes
+  public async advanceBlocksAndTimeMinutes(mins: number): Promise<void> {
+    const totalSeconds = mins * 60;
+    const intervalSeconds = 20;
+    const blocksPerInterval = 20; // 1 block per second for 20 seconds
+    const rounds = Math.ceil(totalSeconds / intervalSeconds);
 
     for (let i = 0; i < rounds; i++) {
-      await this.pic.advanceTime(sixHoursMins * 60 * 1000); // Convert minutes to milliseconds
-      await this.pic.tick(blocksForSixHours);
-
-      // Advance 10 minutes (to process things)
-      await this.pic.advanceTime(shortIntervalMins * 60 * 1000); // Convert minutes to milliseconds
-      await this.pic.tick(blocksForShortInterval);
-    }
-  }
-
-  // Used for when no refresh is pending, a node is updated once every 12 hours (with 10 minutes to process)
-  public async advanceBlocksAndTimeDays(rounds: number): Promise<void> {
-    const halfDayMins = 12 * 60; // 12 hours
-    const shortIntervalMins = 10; // 10 minutes
-    const blocksForHalfDay = 10; // Blocks for 12 hours
-    const blocksForShortInterval = 5; // Blocks for 10 minutes
-
-    for (let i = 0; i < rounds; i++) {
-      // run this twice (24 hours)
-      for (let x = 0; x < 2; x++) {
-        // Advance 12 hours
-        await this.pic.advanceTime(halfDayMins * 60 * 1000); // Convert minutes to milliseconds
-        await this.pic.tick(blocksForHalfDay);
-
-        // Advance 10 minutes
-        await this.pic.advanceTime(shortIntervalMins * 60 * 1000); // Convert minutes to milliseconds
-        await this.pic.tick(blocksForShortInterval);
-      }
+      const timeToAdvance = Math.min(
+        intervalSeconds,
+        totalSeconds - i * intervalSeconds
+      );
+      await this.pic.advanceTime(timeToAdvance * 1000);
+      await this.pic.tick(blocksPerInterval);
     }
   }
 
@@ -243,13 +223,7 @@ export class Manager {
     );
 
     await this.advanceBlocksAndTimeMinutes(3);
-    console.log(await this.pylonDebug());
-    console.log(
-      await this.ntcTestPylon.icrc55_accounts({
-        owner: this.me.getPrincipal(),
-        subaccount: [],
-      })
-    );
+
     const reqType: CreateNodeRequest = match(nodeType)
       .with({ devefi_jes1_ntcmint: P.select() }, (c): CreateNodeRequest => {
         let req: CommonCreateRequest = {
@@ -433,17 +407,6 @@ export class Manager {
     throw new Error("Invalid endpoint type: 'ic' endpoint expected");
   }
 
-  public getNodeCustom(node: NodeShared): Shared__1 {
-    return match(node.custom[0])
-      .with({ devefi_jes1_ntcmint: P.select() }, (shared): Shared__1 => {
-        return shared;
-      })
-      .with({ devefi_jes1_ntcredeem: P.select() }, (shared): Shared__1 => {
-        return shared;
-      })
-      .exhaustive();
-  }
-
   public getNodeDestinationAccount(node: NodeShared): Account {
     if (!node || node.destinations.length === 0) {
       throw new Error("Invalid node or no sources found");
@@ -456,6 +419,18 @@ export class Manager {
     }
 
     throw new Error("Invalid endpoint type: 'ic' endpoint expected");
+  }
+
+  public getMintNodeCustom(node: NodeShared): Shared__1 {
+    if (!node || !node.custom) {
+      throw new Error("Invalid node or no custom data found");
+    }
+
+    if ("devefi_jes1_ntcmint" in node.custom[0]) {
+      return node.custom[0].devefi_jes1_ntcmint;
+    }
+
+    throw new Error("Invalid custom data: 'devefi_jes1_ntcmint' expected");
   }
 
   public async pylonDebug(): Promise<void> {

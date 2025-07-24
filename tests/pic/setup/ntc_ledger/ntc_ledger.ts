@@ -8,27 +8,33 @@ import {
 } from "./declarations/ntc_ledger.idl";
 import { IDL } from "@dfinity/candid";
 import { Principal } from "@dfinity/principal";
+import { NTC_MINTER_CANISTER_ID } from "../constants";
 
 const WASM_PATH = resolve(__dirname, "../ntc_ledger/ntc_ledger.wasm");
 
-export async function NtcLedger(pic: PocketIc, ntc_minter: Principal) {
+export async function NtcLedger(pic: PocketIc) {
   let ledger_args: LedgerArg = {
     Init: {
       minting_account: {
-        owner: ntc_minter,
+        owner: NTC_MINTER_CANISTER_ID,
         subaccount: [],
       },
-      fee_collector_account: [{ owner: ntc_minter, subaccount: [] }],
-      transfer_fee: 100_000_000n,
-      decimals: [12],
+      fee_collector_account: [{ owner: NTC_MINTER_CANISTER_ID, subaccount: [] }],
+      transfer_fee: 500_000n,
+      decimals: [8],
       token_symbol: "NTC",
       token_name: "Neutrinite TCYCLES",
       metadata: [],
-      initial_balances: [],
+      initial_balances: [
+        [
+          { owner: Principal.fromText("aaaaa-aa"), subaccount: [] },
+          100000000000n,
+        ],
+      ], // just to get a block
       archive_options: {
         num_blocks_to_archive: 10000n,
         trigger_threshold: 9000n,
-        controller_id: ntc_minter,
+        controller_id: NTC_MINTER_CANISTER_ID,
         max_transactions_per_response: [],
         max_message_size_bytes: [],
         cycles_for_archive_creation: [],

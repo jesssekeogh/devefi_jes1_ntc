@@ -1,327 +1,241 @@
 import ICRCLedger "mo:devefi-icrc-ledger";
+import ICL "mo:devefi-icrc-ledger/icrc_ledger";
+import IC "./services/ic";
 import ICPLedger "mo:devefi-icp-ledger";
-import IC "./interfaces/ic";
 import Principal "mo:base/Principal";
 import Account "mo:account";
+import Debug "mo:base/Debug";
 import Timer "mo:base/Timer";
 import Blob "mo:base/Blob";
 import Iter "mo:base/Iter";
 import Array "mo:base/Array";
+import Float "mo:base/Float";
 import Nat "mo:base/Nat";
 import Cycles "mo:base/ExperimentalCycles";
 import BTree "mo:stableheapbtreemap/BTree";
 import Nat64 "mo:base/Nat64";
-import IterTools "mo:itertools/Iter";
+import IT "mo:itertools/Iter";
 import List "mo:base/List";
-import Result "mo:base/Result";
+import Error "mo:base/Error";
 import Nat8 "mo:base/Nat8";
-import CyclesMintingInterface "./interfaces/cycles_minting";
+import Time "mo:base/Time";
+import Int "mo:base/Int";
 
-actor class NtcMinter() = this {
 
-    let ONE_NTC = 1_000_000_000_000; // 12 decimals
 
-    let ONE_ICP : Nat = 100_000_000;
+actor class NTCminter() = this {
 
-    let MAX_SEND_CALLS = 10;
-
-    let NOTIFY_TOP_UP_MEMO : Blob = "\54\50\55\50\00\00\00\00";
-
-    let NTC_ledger_id = "ueyo2-wx777-77776-aaatq-cai"; // TODO: replace with the actual NTC ledger ID in production
-    let ICP_ledger_id = "ryjl3-tyaaa-aaaaa-aaaba-cai";
-
-    let CmcMinter = actor ("rkp4c-7iaaa-aaaaa-aaaca-cai") : CyclesMintingInterface.Self;
-    let IcManagement : IC.Self = actor ("aaaaa-aa");
+  
+    let T = 1_000_000_000_000;
+    let NTC_to_canister_fee = 1000_0000; // ~13 cents
+    let NTC_ledger_id = "txyno-ch777-77776-aaaaq-cai";
 
     stable let NTC_mem_v1 = ICRCLedger.Mem.Ledger.V1.new();
     let NTC_ledger = ICRCLedger.Ledger<system>(NTC_mem_v1, NTC_ledger_id, #last, Principal.fromActor(this));
 
-    stable let ICP_mem_v1 = ICPLedger.Mem.Ledger.V1.new();
-    stable let ICP_mem_v2 = ICPLedger.Mem.Ledger.V2.upgrade(ICP_mem_v1);
-    let ICP_ledger = ICPLedger.Ledger<system>(ICP_mem_v2, ICP_ledger_id, #last, Principal.fromActor(this));
+    private let ic : IC.Self = actor ("aaaaa-aa");
 
-    type NtcRedeemRequest = {
-        amount : Nat;
-        canister : Principal;
-        var retry : Nat;
-    };
-
-    type NtcMintRequest = {
-        to : Account.Account;
-        var block_index : ?Nat;
-        var retry : Nat;
-    };
-
-    public type NtcRedeemRequestShared = {
+    type NTC2Can_request_shared = {
         amount : Nat;
         canister : Principal;
         retry : Nat;
+        last_try : Nat64;
     };
 
-    public type NtcMintRequestShared = {
-        to : Account.Account;
-        block_index : ?Nat;
-        retry : Nat;
+    type NTC2Can_request = {
+        amount : Nat;
+        canister : Principal;
+        var retry : Nat;
+        var last_try : Nat64;
     };
 
-    public type Stats = {
-        cycles_balance : Nat;
-        ntc_redeem_requests_in_progress : [(Nat64, NtcRedeemRequestShared)];
-        ntc_mint_requests_in_progress : [(Nat64, NtcMintRequestShared)];
+
+    // Latest
+    stable let NTC2Can = BTree.init<Nat64, NTC2Can_request>(?32); // 32 is the order, or the size of each BTree node
+
+
+    private func canister2subaccount(canister_id : Principal) : Blob {
+        let can = Blob.toArray(Principal.toBlob(canister_id));
+        let size = can.size();
+        let pad_start = 32 - size - 1:Nat;
+        Blob.fromArray(Iter.toArray(IT.flattenArray<Nat8>([
+            Array.tabulate<Nat8>(pad_start, func _ = 0),
+            can,
+            [Nat8.fromNat(size)]
+            ])));
     };
 
-    stable let ntc_redeem_requests = BTree.init<Nat64, NtcRedeemRequest>(?32);
-    stable let ntc_mint_requests = BTree.init<Nat64, NtcMintRequest>(?32);
 
-    public func mint_ntc(to : Account.Account) : async Result.Result<(), Text> {
+    private func subaccount2canister(subaccount : [Nat8]) : ?Principal {
+        if (subaccount.size() != 32) return null;
+        let size = Nat8.toNat(subaccount[31]);
+        if (size == 0 or size > 20) return null;
+        let p = Principal.fromBlob(Blob.fromArray(Iter.toArray(Array.slice(subaccount, 31 - size:Nat, 31))));
+        if (Principal.isAnonymous(p)) return null;
+        if (Principal.toText(p).size() != 27) return null; 
+        ?p
+    };
+
+   
+    stable var unique_request_id : Nat32 = 0;
+    let MAX_CYCLE_SEND_CALLS = 20;
+
+    ignore Timer.recurringTimer<system>(
+        #seconds(6),
+        func() : async () {
+
+            var processing = List.nil<(async (), Nat64, NTC2Can_request)>();
+            var i = 0;
+            let now = Nat64.fromNat(Int.abs(Time.now()));
+            // Make it send MAX_CYCLE_SEND_CALLS requests at a time and then await all
+            var last_tried_id : Nat64 = 0;
+            label sendloop while (i < MAX_CYCLE_SEND_CALLS) { 
+                let ?(id, request) = BTree.deleteMax<Nat64, NTC2Can_request>(NTC2Can, Nat64.compare) else break sendloop;
+                if (request.last_try != 0 and (now - request.last_try < 300*1_000_000_000)) { // retry every 5 minutes
+                    let new_id : Nat64 = ((id >> 32) / 2) << 32 | Nat64.fromNat32(unique_request_id);
+                    ignore BTree.insert<Nat64, NTC2Can_request>(NTC2Can, Nat64.compare, new_id, request);
+                    unique_request_id += 1;
+                    if (id == last_tried_id) break sendloop;
+                    last_tried_id := new_id;
+                    continue sendloop;
+                };
+                let cycles_amount = request.amount * 1_00_00;
+                Debug.print(debug_show({cycles_amount;id;request}));
+                // If we don't have enough cycles, wait for the ICP to be burned. Make sure we don't delete requests.
+                // If we don't have 20T inside canister skip, we need to keep a minimum
+                if (Cycles.balance() < cycles_amount + 20*T) continue sendloop; 
+
+                try {
+                 processing := List.push(((with cycles = cycles_amount) ic.deposit_cycles({ canister_id = request.canister }), id, request), processing);
+                } catch (e) {
+                    Debug.print("Err before await" # Error.message(e));
+                };
+    
+                i += 1;
+            };
+
+            label awaitreq for ((promise, id, req) in List.toIter(processing)) {
+                // Await results of all promises
+                try {
+                    // Q: Can this even trap? When?
+                    let _myrefill = await promise; // Await the promise to get the tick data
+                } catch (_e) {
+                    Debug.print(Error.message(_e));
+                    // Q: If it traps, does it mean we are 100% sure the cycles didn't get sent?
+                    // We readd it to the queue, but with a lower id
+                    if (req.retry > 10) continue awaitreq;
+                    let new_id : Nat64 = ((id >> 32) / 2) << 32 | Nat64.fromNat32(unique_request_id);
+                    req.retry += 1;
+                    req.last_try := Nat64.fromNat(Int.abs(Time.now()));
+                    ignore BTree.insert<Nat64, NTC2Can_request>(NTC2Can, Nat64.compare, new_id, req);
+                    unique_request_id += 1;
+                };
+            };
+
+        },
+    );
+
+
+
+    NTC_ledger.onReceive(
+        func(t) {
+            // Strategy: Unlike TCycles ledger, we will retry refilling the canister
+            // if it doesn't work, the NTC gets burned. No NTC is gets returned if the subaccount is not a valid canister.
+            let ?minter = NTC_ledger.getMinter() else Debug.trap("Err getMinter not set");
+            let ?subaccount = t.to.subaccount else return;
+
+            // Here we can convert the subaccount to a canister and send cycles while burning the NTC
+            // We are adding these requests to a queue
+            if (t.amount < NTC_to_canister_fee * 2) {
+                if (t.amount > NTC_ledger.getFee()*2) { // burn if between ledger fee and NTC_to_canister_fee
+                    // Burn
+                    ignore NTC_ledger.send({
+                        to = #icrc(minter);
+                        amount = t.amount;
+                        from_subaccount = ?subaccount;
+                        memo = null;
+                    });
+                }; // ignore smaller amounts
+                return;
+            };
+
+            // We add them based on amount and request id so we can pick the largest requests first
+            let id : Nat64 = ((Nat64.fromNat(t.amount) / 1_0000_0000) << 32) | Nat64.fromNat32(unique_request_id);
+            let ?canister = subaccount2canister(Blob.toArray(subaccount)) else return;
+            ignore BTree.insert<Nat64, NTC2Can_request>(
+                NTC2Can,
+                Nat64.compare,
+                id,
+                {
+                    amount = t.amount - NTC_to_canister_fee;
+                    canister = canister;
+                    var retry = 0;
+                    var last_try = 0;
+                },
+            );
+            unique_request_id += 1;
+
+            // Burn
+            ignore NTC_ledger.send({
+                to = #icrc(minter);
+                amount = t.amount;
+                from_subaccount = ?subaccount;
+                memo = null;
+            });
+        }
+    );
+
+    public query func get_queue() : async [(Nat64, NTC2Can_request_shared)] {
+        
+        Array.map<(Nat64, NTC2Can_request), (Nat64, NTC2Can_request_shared)>(BTree.toArray(NTC2Can), func(x) {
+            (x.0, {
+                amount = x.1.amount;
+                canister = x.1.canister;
+                retry = x.1.retry;
+                last_try = x.1.last_try;
+            });
+        });
+    };
+
+    public shared ({ caller }) func mint(to : Account.Account) : async () {
         // Here we accept native cycles to mint NTC
         let received = Cycles.accept<system>(Cycles.available());
-        if (received < ONE_NTC) return #err("Not enough cycles received. Required: " # debug_show (ONE_NTC) # ", received: " # debug_show (received));
+        if (received < T / 100) Debug.trap("Minimum 0.01T");
+
+        // Convert from 12 decimals to 8
+        let amount = received / 1_00_00;
 
         // Mint
         ignore NTC_ledger.send({
             to = #icrc(to);
-            amount = received;
+            amount = amount;
             from_subaccount = null;
-            memo = null;
+            memo = ?canister2subaccount(caller);
         });
 
-        return #ok();
     };
 
-    public query func get_ntc_stats() : async Stats {
-        let redeem_requests = BTree.toArray<Nat64, NtcRedeemRequest>(ntc_redeem_requests);
-        let mint_requests = BTree.toArray<Nat64, NtcMintRequest>(ntc_mint_requests);
+    type Stats = {
+        cycles : Nat;
+    };
 
+    public query func stats() : async Stats {
         {
-            cycles_balance = Cycles.balance();
-            ntc_redeem_requests_in_progress = Array.map<(Nat64, NtcRedeemRequest), (Nat64, NtcRedeemRequestShared)>(
-                redeem_requests,
-                func((id, req)) : (Nat64, NtcRedeemRequestShared) {
-                    (
-                        id,
-                        {
-                            amount = req.amount;
-                            canister = req.canister;
-                            retry = req.retry;
-                        },
-                    );
-                },
-            );
-            ntc_mint_requests_in_progress = Array.map<(Nat64, NtcMintRequest), (Nat64, NtcMintRequestShared)>(
-                mint_requests,
-                func((id, req)) : (Nat64, NtcMintRequestShared) {
-                    (
-                        id,
-                        {
-                            to = req.to;
-                            block_index = req.block_index;
-                            retry = req.retry;
-                        },
-                    );
-                },
-            );
+            cycles = Cycles.balance();
         };
     };
 
-    public query func get_redeem_account(canister_id : Principal) : async (Account.Account, Text) {
+    public query func get_account(canister_id : Principal) : async (Account.Account, Text, Principal) {
         let acc : Account.Account = {
             owner = Principal.fromActor(this);
-            subaccount = ?canisterToSubaccount(canister_id);
+            subaccount = ?canister2subaccount(canister_id);
         };
+        let ?back = subaccount2canister(Blob.toArray(canister2subaccount(canister_id))) else Debug.trap("Has to be a canister");
         (
             acc,
             Account.toText(acc),
+            back
         );
-    };
-
-    ignore Timer.recurringTimer<system>(
-        #seconds(30),
-        func() : async () {
-            if (BTree.size(ntc_redeem_requests) == 0) return;
-
-            var processing = List.nil<(async (), Nat64, NtcRedeemRequest)>();
-
-            var i = 0;
-
-            label sendloop while (i < MAX_SEND_CALLS) {
-                let ?(id, request) = BTree.max<Nat64, NtcRedeemRequest>(ntc_redeem_requests) else continue sendloop;
-
-                if (Cycles.balance() < request.amount) continue sendloop; // If we don't have enough cycles, wait for the ICP to be burned. Make sure we don't delete requests.
-
-                // Now that we've confirmed we have enough cycles, delete the entry
-                ignore BTree.deleteMax<Nat64, NtcRedeemRequest>(ntc_redeem_requests, Nat64.compare);
-
-                processing := List.push(((with cycles = request.amount) IcManagement.deposit_cycles({ canister_id = request.canister }), id, request), processing);
-                i += 1;
-            };
-
-            label awaitreq for ((promise, id, req) in List.toIter(processing)) {
-                try {
-                    let _myrefill = await promise;
-                } catch (_e) {
-                    // We read it to the queue, but with a lower id
-                    if (req.retry > 10) continue awaitreq;
-                    let new_id : Nat64 = ((id >> 32) / 2) << 32 | id;
-                    req.retry += 1;
-                    ignore BTree.insert<Nat64, NtcRedeemRequest>(ntc_redeem_requests, Nat64.compare, new_id, req);
-                };
-            };
-
-        },
-    );
-
-    ignore Timer.recurringTimer<system>(
-        #seconds(30),
-        func() : async () {
-            if (BTree.size(ntc_mint_requests) == 0) return;
-
-            var processing = List.nil<(async CyclesMintingInterface.NotifyTopUpResult, Nat64, NtcMintRequest)>();
-
-            var i = 0;
-
-            label sendloop while (i < MAX_SEND_CALLS) {
-                let ?(id, request) = BTree.max<Nat64, NtcMintRequest>(ntc_mint_requests) else continue sendloop;
-                let ?blockid = request.block_index else return;
-
-                ignore BTree.deleteMax<Nat64, NtcMintRequest>(ntc_mint_requests, Nat64.compare);
-
-                processing := List.push((CmcMinter.notify_top_up({ block_index = Nat64.fromNat(blockid); canister_id = Principal.fromActor(this) }), id, request), processing);
-                i += 1;
-            };
-
-            label awaitreq for ((promise, id, req) in List.toIter(processing)) {
-                try {
-                    switch (await promise) {
-                        case (#Ok(cycles)) {
-                            ignore NTC_ledger.send({
-                                to = #icrc(req.to);
-                                amount = cycles;
-                                from_subaccount = null;
-                                memo = null;
-                            });
-                        };
-                        case (#Err(_)) {
-                            // We read it to the queue, but with a lower id
-                            if (req.retry > 10) continue awaitreq;
-                            let new_id : Nat64 = ((id >> 32) / 2) << 32 | id;
-                            req.retry += 1;
-                            ignore BTree.insert<Nat64, NtcMintRequest>(ntc_mint_requests, Nat64.compare, new_id, req);
-                        };
-                    }
-
-                } catch (_e) {
-                    // We read it to the queue, but with a lower id
-                    if (req.retry > 10) continue awaitreq;
-                    let new_id : Nat64 = ((id >> 32) / 2) << 32 | id;
-                    req.retry += 1;
-                    ignore BTree.insert<Nat64, NtcMintRequest>(ntc_mint_requests, Nat64.compare, new_id, req);
-                };
-            };
-
-        },
-    );
-
-    private func canisterToSubaccount(canister_id : Principal) : Blob {
-        // Convert principal to array of Nat8
-        let arr = Principal.toBlob(canister_id) |> Blob.toArray(_);
-
-        // Prepend length and pad to 32 bytes, then convert back to Blob
-        Iter.fromArray(arr)
-        |> IterTools.prepend(Nat8.fromNat(arr.size()), _)
-        |> IterTools.pad<Nat8>(_, 32, 0)
-        |> Iter.toArray(_)
-        |> Blob.fromArray(_);
-    };
-
-    private func subaccountToCanister(subaccount : [Nat8]) : Principal {
-        Array.subArray<Nat8>(subaccount, 1, 29)
-        |> Blob.fromArray(_)
-        |> Principal.fromBlob(_);
-    };
-
-    NTC_ledger.onReceive(
-        func(tx) {
-            // Strategy: Unlike the TCycles ledger, we will retry refilling the canister.
-            // If it doesn't work, the NTC gets burned. No NTC is returned if the subaccount is not a valid canister.
-
-            // Here we convert the subaccount to a canister and send cycles while burning the NTC.
-            // We are adding these requests to a queue.
-
-            // We send from bal, meaning if the user sends below the threshold they can later send more and the redeem will process.
-            let ?subaccount = tx.to.subaccount else return;
-            let bal = NTC_ledger.balance(?subaccount);
-
-            if (bal < ONE_NTC) return;
-
-            // Burn NTC by sending it to the minter
-            let ?minter = NTC_ledger.getMinter() else return;
-            let #ok(send_idx) = NTC_ledger.send({
-                to = #icrc(minter);
-                amount = bal;
-                from_subaccount = ?subaccount;
-                memo = null;
-            }) else return;
-
-            // We add them based on balance and request id so we can pick the largest requests first
-            let id : Nat64 = ((Nat64.fromNat(bal) / 1_0000_0000) << 32) | send_idx;
-            ignore BTree.insert<Nat64, NtcRedeemRequest>(
-                ntc_redeem_requests,
-                Nat64.compare,
-                id,
-                {
-                    amount = bal;
-                    canister = subaccountToCanister(Blob.toArray(subaccount));
-                    var retry = 0;
-                },
-            );
-        }
-    );
-
-    ICP_ledger.onReceive(
-        func(tx) {
-            let #icrc(from) = tx.from else return;
-            let subaccount = switch (tx.memo) {
-                case (?memo) {
-                    if (memo.size() == 32) { ?memo } else { return } // Ensure the memo is a valid subaccount
-                };
-                case (null) { null };
-            };
-
-            let bal = ICP_ledger.balance(subaccount);
-
-            if (bal < ONE_ICP) return;
-
-            let #ok(send_idx) = ICP_ledger.send({
-                to = #icrc({
-                    owner = Principal.fromActor(CmcMinter);
-                    subaccount = ?canisterToSubaccount(Principal.fromActor(this));
-                });
-                amount = bal;
-                from_subaccount = null;
-                memo = ?NOTIFY_TOP_UP_MEMO;
-            }) else return;
-
-            // We add them based on balance and request id so we can pick the largest requests first
-            let id : Nat64 = ((Nat64.fromNat(bal) / 1_0000_0000) << 32) | send_idx;
-            ignore BTree.insert<Nat64, NtcMintRequest>(
-                ntc_mint_requests,
-                Nat64.compare,
-                id,
-                {
-                    to = { owner = from.owner; subaccount = subaccount };
-                    var block_index = null;
-                    var retry = 0;
-                },
-            );
-        }
-    );
-
-    ICP_ledger.onSent(
-        func(txid, blockid) {
-            let ?mint_request = BTree.get<Nat64, NtcMintRequest>(ntc_mint_requests, Nat64.compare, txid) else return;
-            mint_request.block_index := ?blockid;
-        }
-    );
+    }
 
 };

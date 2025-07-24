@@ -22,6 +22,8 @@ module {
 
     public let ID = "devefi_jes1_ntcredeem";
 
+    // TOOD make it a splitter and send to multiple canisters, each needs atleast 1 NTC to work though
+
     public class Mod({
         xmem : MU.MemShell<M.Mem>;
         core : Core.Mod;
@@ -33,15 +35,15 @@ module {
 
         // PRODUCTION ENVIRONMENT (uncomment for production deployment):
 
-        // let NtcLedger = Principal.fromText("production-ntc-ledger-id");
-        // let NtcMinter = Principal.fromText("production-ntc-minter-id");
+        // let NtcLedger = Principal.fromText("7dx3o-7iaaa-aaaal-qsrdq-cai");
+        // let NtcMinter = Principal.fromText("7ew52-sqaaa-aaaal-qsrda-cai");
 
         // TESTING ENVIRONMENT (comment out for production):
 
-        let NtcLedger = Principal.fromText("ueyo2-wx777-77776-aaatq-cai");
-        let NtcMinter = Principal.fromText("udzio-3p777-77776-aaata-cai");
+        let NtcLedger = Principal.fromText("txyno-ch777-77776-aaaaq-cai");
+        let NtcMinter = Principal.fromText("vjwku-z7777-77776-aaaua-cai");
 
-        let MINIMUM_REDEEM : Nat = 1_0000_0000_0000; // 1 NTC
+        let MINIMUM_REDEEM : Nat = 100_000_000; // 1 NTC
 
         public func meta() : T.Meta {
             {
@@ -88,10 +90,7 @@ module {
 
                     let #ok(intent) = core.Source.Send.intent(
                         sourceRedeem,
-                        #external_account(#icrc({
-                            owner = NtcMinter;
-                            subaccount = ?Utils.principalToSubaccount(redeemCanister.owner);
-                        })),
+                        #external_account(#icrc({ owner = NtcMinter; subaccount = ?Utils.canister2subaccount(redeemCanister.owner) })),
                         redeemBal,
                         null,
                     ) else return;

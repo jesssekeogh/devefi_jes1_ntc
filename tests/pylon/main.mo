@@ -32,7 +32,7 @@ shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
 
     // chrono
     stable let chrono_mem_v1 = Chrono.Mem.ChronoClient.V1.new({
-        router = Principal.fromText("txyno-ch777-77776-aaaaq-cai"); // Test chrono router canister
+        router = Principal.fromText("t63gs-up777-77776-aaaba-cai"); // Test chrono router canister
     });
 
     let chrono = Chrono.ChronoClient<system>({ xmem = chrono_mem_v1 });
@@ -46,12 +46,12 @@ shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
 
     let test_icrc : Principal = Principal.fromText("tqzl2-p7777-77776-aaaaa-cai"); // Test ICRC ledger
     let icp_ledger = Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai");
-    let ntc_ledger = Principal.fromText("ueyo2-wx777-77776-aaatq-cai");
+    let ntc_ledger = Principal.fromText("txyno-ch777-77776-aaaaq-cai");
 
     dvf.add_ledger<system>(test_icrc, #icrc);
     dvf.add_ledger<system>(icp_ledger, #icp);
     dvf.add_ledger<system>(ntc_ledger, #icrc);
-    
+
     let billing : ICRC55.BillingPylon = {
         ledger = test_icrc;
         min_create_balance = 3000000;
@@ -96,6 +96,7 @@ shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
     let devefi_jes1_ntcmint = NtcMintVector.Mod({
         xmem = mem_vec_ntcmint_1;
         core;
+        dvf;
     });
 
     let devefi_jes1_ntcredeem = NtcRedeemVector.Mod({
@@ -118,11 +119,19 @@ shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
 
     private func proc() { devefi_jes1_ntcmint.run() };
 
+    private func async_proc() : async* () {
+        await* devefi_jes1_ntcmint.runAsync();
+    };
+
     ignore Timer.recurringTimer<system>(
         #seconds 30,
         func() : async () { core.heartbeat(proc) },
     );
 
+    ignore Timer.recurringTimer<system>(
+        #seconds 45,
+        func() : async () { await* async_proc() },
+    );
     // ICRC-55
 
     public query func icrc55_get_pylon_meta() : async ICRC55.PylonMetaResp {

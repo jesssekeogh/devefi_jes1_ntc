@@ -1,3 +1,8 @@
+import {
+  ICP_TRANSACTION_FEE,
+  NTC_MINTER_CANISTER_ID,
+  NTC_TEST_PYLON_CANISTER_ID,
+} from "../setup/constants.ts";
 import { Manager } from "../setup/manager.ts";
 import { NodeShared } from "../setup/ntc_test_pylon/declarations/ntc_test_pylon.did";
 
@@ -14,61 +19,207 @@ describe("Mint", () => {
     await manager.afterAll();
   });
 
-  it("should mint and send ntc", async () => {
+  it("should reject ICP amounts below MINIMUM_MINT (1 ICP)", async () => {
+    expect(node.sources[0].balance).toBe(0n);
+    await manager.sendIcp(
+      manager.getNodeSourceAccount(node, 0),
+      10000_0000n + ICP_TRANSACTION_FEE
+    ); // 1.0001 ICP
+
+    await manager.advanceBlocksAndTimeMinutes(3);
+    node = await manager.getNode(node.id);
+
+    expect(node.sources[0].balance).toBe(10000_0000n); // should remain unchanged
+    let mem = manager.getMintNodeCustom(node);
+
+    expect(mem.log.length).toBe(0);
+    expect(mem.internals.cycles_to_send).toEqual([]);
+    expect(mem.internals.block_idx).toEqual([]);
+    expect(mem.internals.updating).toEqual({ Init: null });
+    expect(mem.internals.tx_idx).toEqual([]);
+  });
+
+  it("should only process when ICP balance exceeds fee + MINIMUM_MINT", async () => {
+    expect(node.sources[0].balance).toBe(10000_0000n);
+
+    await manager.sendIcp(
+      manager.getNodeSourceAccount(node, 0),
+      ICP_TRANSACTION_FEE * 3n
+    ); // just enought to process
+
+    await manager.advanceBlocksAndTimeMinutes(3);
+    node = await manager.getNode(node.id);
+    let mem = manager.getMintNodeCustom(node);
+    expect(node.sources[0].balance).toBe(0n);
+    expect(mem.log.length).toBe(2);
+
+    // Check for any errors first
+    const errors = mem.log.filter((entry) => "Err" in entry);
+    expect(errors).toHaveLength(0); // More descriptive failure message
+
+    // Then check successful operations
+    const successfulOps = mem.log
+      .filter((entry) => "Ok" in entry)
+      .map((entry) => entry.Ok.operation);
+    expect(successfulOps).toContain("top_up");
+    expect(successfulOps).toContain("mint_ntc");
+
+    expect(mem.internals.cycles_to_send).toEqual([]);
+    expect(mem.internals.block_idx).toEqual([]);
+    expect(mem.internals.updating).toHaveProperty("Done");
+    expect(mem.internals.tx_idx).toEqual([]);
+  });
+
+  it("should successfully mint NTC tokens when receiving sufficient ICP", async () => {
     let beforeBalance = await manager.getMyBalances();
     expect(node.sources[0].balance).toBe(0n);
-    expect(beforeBalance.ntc_tokens).toBe(0n);
 
     await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 2_0000_0000n);
 
-    await manager.advanceBlocksAndTimeMinutes(10);
+    await manager.advanceBlocksAndTimeMinutes(5);
+
+    node = await manager.getNode(node.id);
+    let afterBalance = await manager.getMyBalances();
+    let mem = manager.getMintNodeCustom(node);
+
+    expect(node.sources[0].balance).toBe(0n);
+    expect(afterBalance.ntc_tokens).toBeGreaterThan(beforeBalance.ntc_tokens);
+
+    // Check for any errors first
+    const errors = mem.log.filter((entry) => "Err" in entry);
+    expect(errors).toHaveLength(0); // More descriptive failure message
+
+    // Then check successful operations
+    const successfulOps = mem.log
+      .filter((entry) => "Ok" in entry)
+      .map((entry) => entry.Ok.operation);
+    expect(successfulOps).toContain("top_up");
+    expect(successfulOps).toContain("mint_ntc");
+    expect(mem.internals.cycles_to_send).toEqual([]);
+    expect(mem.internals.block_idx).toEqual([]);
+    expect(mem.internals.updating).toHaveProperty("Done");
+    expect(mem.internals.tx_idx).toEqual([]);
+  });
+
+  it("should respect 3-minute timeout between operations", async () => {
+    // Use existing node - ensure it starts with zero balance
+    expect(node.sources[0].balance).toBe(0n);
+
+    // Get initial log length (from previous tests)
+    let mem = manager.getMintNodeCustom(node);
+    const initialLogLength = mem.log.length;
+
+    // Send first ICP
+    await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 2_0000_0000n);
+    await manager.advanceBlocksAndTimeMinutes(3);
+
+    node = await manager.getNode(node.id);
+    expect(node.sources[0].balance).toBe(0n); // Should be processed
+
+    // Send second ICP
+    await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 2_0000_0000n);
+    await manager.advanceBlocksAndTimeMinutes(3);
+
+    node = await manager.getNode(node.id);
+    expect(node.sources[0].balance).toBe(0n); // Should be processed
+
+    // Send third ICP
+    await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 2_0000_0000n);
+    await manager.advanceBlocksAndTimeMinutes(3);
+
+    node = await manager.getNode(node.id);
+    expect(node.sources[0].balance).toBe(0n); // Should be processed
+
+    // Now advance enough time for all async operations to complete
+    await manager.advanceBlocksAndTimeMinutes(3); // Let all operations finish
+
+    node = await manager.getNode(node.id);
+    mem = manager.getMintNodeCustom(node);
+
+    // All operations should be complete
+    expect(mem.internals.updating).toHaveProperty("Done");
+    expect(mem.log.length).toBe(initialLogLength + 6); // Should have 6 operations (3 × 2)
+
+    // Get all new log entries added by this test
+    const newLogEntries = mem.log.slice(initialLogLength);
+    const successfulEntries = newLogEntries.filter((entry) => "Ok" in entry);
+
+    // Should have 6 successful operations
+    expect(successfulEntries).toHaveLength(6);
+
+    // Verify operations are in correct order
+    const operations = successfulEntries.map((entry) => entry.Ok.operation);
+    expect(operations).toEqual([
+      "top_up",
+      "mint_ntc", // First batch
+      "top_up",
+      "mint_ntc", // Second batch
+      "top_up",
+      "mint_ntc", // Third batch
+    ]);
+
+    // Check timestamps to ensure 3-minute gaps between batches
+    const timestamps = successfulEntries.map((entry) => entry.Ok.timestamp);
+
+    const threeMinutesInNanos = 3n * 60n * 1_000_000_000n;
+
+    // Check gap between first and second batch (compare end of first to start of second)
+    const firstToSecondGap = timestamps[2] - timestamps[1];
+    expect(firstToSecondGap).toBeGreaterThanOrEqual(threeMinutesInNanos);
+
+    // Check gap between second and third batch
+    const secondToThirdGap = timestamps[4] - timestamps[3];
+    expect(secondToThirdGap).toBeGreaterThanOrEqual(threeMinutesInNanos);
+  });
+
+  it("should increase minter cycles while keeping pylon cycles stable after minting operations", async () => {
+    const minterBeforeBalance = await manager.getCyclesBalance(
+      NTC_MINTER_CANISTER_ID
+    );
+    const pylonBeforeBalance = await manager.getCyclesBalance(
+      NTC_TEST_PYLON_CANISTER_ID
+    );
+
+    let beforeBalance = await manager.getMyBalances();
+    expect(node.sources[0].balance).toBe(0n);
+
+    await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 200_0000_0000n); // enough to reflect significant changes
+    await manager.advanceBlocksAndTimeMinutes(5);
+
+    node = await manager.getNode(node.id);
 
     node = await manager.getNode(node.id);
     let afterBalance = await manager.getMyBalances();
 
     expect(node.sources[0].balance).toBe(0n);
-    expect(afterBalance.ntc_tokens).toBeGreaterThan(0n);
+    expect(afterBalance.ntc_tokens).toBeGreaterThan(beforeBalance.ntc_tokens); // ensure top up happened
+
+    const minterAfterCyclesBalance = await manager.getCyclesBalance(
+      NTC_MINTER_CANISTER_ID
+    );
+    const pylonAfterCyclesBalance = await manager.getCyclesBalance(
+      NTC_TEST_PYLON_CANISTER_ID
+    );
+
+    // Allow for some variance in cycles (within ~100 billion cycles)
+    const cyclesDifference = pylonAfterCyclesBalance > pylonBeforeBalance 
+      ? pylonAfterCyclesBalance - pylonBeforeBalance 
+      : pylonBeforeBalance - pylonAfterCyclesBalance;
+    expect(cyclesDifference).toBeLessThan(100_000_000_000n); // Within 100 billion cycles
+    expect(minterAfterCyclesBalance).toBeGreaterThan(minterBeforeBalance);
   });
 
-  // it.skip("should reject ICP amounts below MINIMUM_MINT (1 ICP)", async () => {
-  //   // TODO: Test sending < 100_000_000 ICP returns error or doesn't process
+  // it("should not mint if canister is below minimum cycles threshold", async () => {
+  //   // TODO: Test that minting is blocked when canister cycles fall below required minimum
   // });
 
-  // it.skip("should only process when ICP balance exceeds fee + MINIMUM_MINT", async () => {
-  //   // TODO: Test mintBal > mintFee + MINIMUM_MINT condition
+  // it("should mint different amounts of NTC depending on ICP amount", async () => {
+  //   // TODO: Test that minting is blocked when canister cycles fall below required minimum
   // });
 
-  // it.skip("should send ICP to CMC with correct subaccount", async () => {
-  //   // TODO: Test ICP sent to CmcMinter with principalToSubaccount(core.getThisCan())
-  // });
-
-  // it.skip("should track transaction ID after ICP transfer", async () => {
-  //   // TODO: Test NodeUtils.tx_sent(nodeMem, txId) functionality
-  // });
-
-  // it.skip("should wait for ICP transaction confirmation before minting", async () => {
-  //   // TODO: Test ledger.isSent(refreshIdx) check in async flow
-  // });
-
-  // it.skip("should call CMC notify_top_up after ICP transfer", async () => {
-  //   // TODO: Test cycles minting canister notification process
-  // });
-
-  // it.skip("should mint NTC using received cycles", async () => {
-  //   // TODO: Test NtcMinter.mint_ntc call with cycles
-  // });
-
-  // it.skip("should forward NTC to destination slot", async () => {
-  //   // TODO: Test NTC forwarding from source slot 1 to destination port 0
-  // });
-
-  // it.skip("should handle node state transitions correctly", async () => {
-  //   // TODO: Test node_ready, node_done state management
-  // });
-
-  // it.skip("should respect 3-minute timeout between operations", async () => {
-  //   // TODO: Test timeout logic in node_ready function
-  // });
+  // TODO some test to check what happens if items fail in the async processing
+  // TODO need to stop canister for that
+  // TODO billing tests to make sure fees are taken
 
   // it.skip("should handle async errors gracefully", async () => {
   //   // TODO: Test try/catch error handling in singleAsync
@@ -249,5 +400,4 @@ describe("Mint", () => {
   // it.skip("should verify ledger.isSent before async processing", async () => {
   //   // TODO: Test async flow only proceeds when ICP transaction is confirmed
   // });
-
 });

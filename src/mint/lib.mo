@@ -1,10 +1,19 @@
 import MU "mo:mosup";
 import Map "mo:map/Map";
 import Principal "mo:base/Principal";
+import Nat64 "mo:base/Nat64";
+import Error "mo:base/Error";
 import Option "mo:base/Option";
+import Buffer "mo:base/Buffer";
+import Ledgers "mo:devefi/ledgers";
 import Core "mo:devefi/core";
+import U "mo:devefi/utils";
 import Ver1 "./memory/v1";
 import I "./interface";
+import Utils "../utils/Utils";
+import NtcMinterInterface "../interfaces/ntc_minter";
+import CyclesMintingInterface "../interfaces/cycles_minting";
+import Cycles "mo:base/ExperimentalCycles";
 
 module {
     let T = Core.VectorModule;
@@ -24,6 +33,7 @@ module {
     public class Mod({
         xmem : MU.MemShell<M.Mem>;
         core : Core.Mod;
+        dvf : Ledgers.Ledgers;
     }) : T.Class<I.CreateRequest, I.ModifyRequest, I.Shared> {
 
         let mem = MU.access(xmem);
@@ -32,17 +42,23 @@ module {
 
         let IcpLedger = Principal.fromText("ryjl3-tyaaa-aaaaa-aaaba-cai");
 
+        let CmcMinter = actor ("rkp4c-7iaaa-aaaaa-aaaca-cai") : CyclesMintingInterface.Self;
+
         // PRODUCTION ENVIRONMENT (uncomment for production deployment):
 
-        // let NtcLedger = Principal.fromText("production-ntc-ledger-id");
-        // let NtcMinter = Principal.fromText("production-ntc-minter-id");
+        // let NtcLedger = Principal.fromText("7dx3o-7iaaa-aaaal-qsrdq-cai");
+        // let NtcMinter = actor ("7ew52-sqaaa-aaaal-qsrda-cai") : NtcMinterInterface.Self;
 
         // TESTING ENVIRONMENT (comment out for production):
 
-        let NtcLedger = Principal.fromText("ueyo2-wx777-77776-aaatq-cai");
-        let NtcMinter = Principal.fromText("udzio-3p777-77776-aaata-cai");
+        let NtcLedger = Principal.fromText("txyno-ch777-77776-aaaaq-cai");
+        let NtcMinter = actor ("vjwku-z7777-77776-aaaua-cai") : NtcMinterInterface.Self;
 
         let MINIMUM_MINT : Nat = 100_000_000; // 1 ICP
+
+        let CYCLES_BALANCE_THRESHOLD : Nat = 20_000_000_000_000; // 20 T
+
+        let NOTIFY_TOP_UP_MEMO : Blob = "\54\50\55\50\00\00\00\00";
 
         public func meta() : T.Meta {
             {
@@ -60,7 +76,7 @@ module {
                 billing = [
                     {
                         cost_per_day = 0;
-                        transaction_fee = #flat_fee_multiplier(500); // 0.05 NTC
+                        transaction_fee = #flat_fee_multiplier(20); // 0.1 NTC
                     },
                 ];
                 sources = sources(0);
@@ -83,21 +99,51 @@ module {
             };
         };
 
+        public func runAsync() : async* () {
+            label vec_loop for ((vid, nodeMem) in Map.entries(mem.main)) {
+                let ?vec = core.getNodeById(vid) else continue vec_loop;
+                if (not vec.active) continue vec_loop;
+                if (vec.billing.frozen) continue vec_loop;
+                if (Option.isSome(vec.billing.expires)) continue vec_loop;
+                if (NodeUtils.node_ready(nodeMem)) {
+                    await* Run.singleAsync(vid, vec, nodeMem);
+                    return; // return after finding the first ready node
+                };
+            };
+        };
+
+        // set the callback to save any block index
+        dvf.onEvent(
+            func(event) {
+                let #sent({ id; ledger; block_id }) = event else return;
+
+                if (ledger != IcpLedger) return;
+
+                label vec_loop for ((vid, nodeMem) in Map.entries(mem.main)) {
+                    let ?vec_tx_id = nodeMem.internals.tx_idx else continue vec_loop;
+                    if (vec_tx_id == id) nodeMem.internals.block_idx := ?block_id;
+                };
+            }
+        );
+
         module Run {
             public func single(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : () {
                 let ?sourceMint = core.getSource(vid, vec, 0) else return;
                 let mintBal = core.Source.balance(sourceMint);
-                let ?toSourceAccount = core.getSourceAccountIC(vec, 1) else return;
+                let mintFee = core.Source.fee(sourceMint);
 
-                if (mintBal > MINIMUM_MINT) {
+                // only try send when a tx is not already in progress
+                if (mintBal > mintFee + MINIMUM_MINT and Option.isNull(nodeMem.internals.tx_idx)) {
                     let #ok(intent) = core.Source.Send.intent(
                         sourceMint,
-                        #external_account(#icrc({ owner = NtcMinter; subaccount = null })),
+                        #external_account(#icrc({ owner = Principal.fromActor(CmcMinter); subaccount = ?Utils.principalToSubaccount(core.getThisCan()) })),
                         mintBal,
-                        toSourceAccount.subaccount, // NTC is later received here, computed from the memo
+                        ?NOTIFY_TOP_UP_MEMO,
                     ) else return;
 
-                    ignore core.Source.Send.commit(intent);
+                    let txId = core.Source.Send.commit(intent);
+
+                    NodeUtils.tx_sent(nodeMem, txId);
                 };
 
                 // Forward ntc to the destination
@@ -116,11 +162,28 @@ module {
                     ignore core.Source.Send.commit(intent);
                 };
             };
+
+            public func singleAsync(vid : T.NodeId, vec : T.NodeCoreMem, nodeMem : NodeMem) : async* () {
+                try {
+                    await* NtcMintingActions.top_up(nodeMem, vid);
+                    await* NtcMintingActions.mint_ntc(nodeMem, vid, vec);
+                } catch (err) {
+                    NodeUtils.log_activity(nodeMem, "async_cycle", #Err(Error.message(err)));
+                } finally {
+                    NodeUtils.node_done(nodeMem);
+                };
+            };
         };
 
         public func create(vid : T.NodeId, _req : T.CommonCreateRequest, _t : I.CreateRequest) : T.Create {
             let nodeMem : NodeMem = {
-                internals = {};
+                internals = {
+                    var updating = #Init;
+                    var tx_idx = null;
+                    var block_idx = null;
+                    var cycles_to_send = null;
+                };
+                var log = [];
             };
             ignore Map.put(mem.main, Map.n32hash, vid, nodeMem);
             #ok(ID);
@@ -141,10 +204,16 @@ module {
         };
 
         public func get(vid : T.NodeId, _vec : T.NodeCoreMem) : T.Get<I.Shared> {
-            let ?_t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
+            let ?t = Map.get(mem.main, Map.n32hash, vid) else return #err("Node not found for ID: " # debug_show vid);
 
             #ok {
-                internals = {};
+                internals = {
+                    updating = t.internals.updating;
+                    tx_idx = t.internals.tx_idx;
+                    block_idx = t.internals.block_idx;
+                    cycles_to_send = t.internals.cycles_to_send;
+                };
+                log = t.log;
             };
         };
 
@@ -156,6 +225,95 @@ module {
 
         public func destinations(_id : T.NodeId) : T.Endpoints {
             [(1, "To")];
+        };
+
+        module NodeUtils {
+            public func node_ready(nodeMem : Ver1.NodeMem) : Bool {
+                let timeout : Nat64 = (3 * 60 * 1_000_000_000); // 3 mins
+
+                if (Option.isNull(nodeMem.internals.block_idx)) return false;
+
+                switch (nodeMem.internals.updating) {
+                    case (#Init) {
+                        nodeMem.internals.updating := #Calling(U.now());
+                        return true;
+                    };
+                    case (#Calling(_)) {
+                        return false; // If already in Calling state, do not proceed
+                    };
+                    case (#Done(ts)) {
+                        if (U.now() >= ts + timeout) {
+                            nodeMem.internals.updating := #Calling(U.now());
+                            return true;
+                        } else {
+                            return false;
+                        };
+                    };
+                };
+            };
+
+            public func node_done(nodeMem : Ver1.NodeMem) : () {
+                nodeMem.internals.updating := #Done(U.now());
+            };
+
+            public func tx_sent(nodeMem : Ver1.NodeMem, txId : Nat64) : () {
+                nodeMem.internals.tx_idx := ?txId;
+            };
+
+            public func log_activity(nodeMem : Ver1.NodeMem, operation : Text, result : { #Ok; #Err : Text }) : () {
+                let log = Buffer.fromArray<Ver1.Activity>(nodeMem.log);
+
+                switch (result) {
+                    case (#Ok(())) {
+                        log.add(#Ok({ operation = operation; timestamp = U.now() }));
+                    };
+                    case (#Err(msg)) {
+                        log.add(#Err({ operation = operation; msg = msg; timestamp = U.now() }));
+                    };
+                };
+
+                if (log.size() > 10) {
+                    ignore log.remove(0); // remove 1 item from the beginning
+                };
+
+                nodeMem.log := Buffer.toArray(log);
+            };
+        };
+
+        module NtcMintingActions {
+            public func top_up(nodeMem : NodeMem, vid : T.NodeId) : async* () {
+                let ?blockIdx = nodeMem.internals.block_idx else return;
+
+                switch (await CmcMinter.notify_top_up({ block_index = Nat64.fromNat(blockIdx); canister_id = core.getThisCan() })) {
+                    case (#Ok(cycles)) {
+                        nodeMem.internals.block_idx := null; // reset block index after successful top-up
+                        nodeMem.internals.cycles_to_send := ?cycles;
+                        NodeUtils.log_activity(nodeMem, "top_up", #Ok());
+                    };
+                    case (#Err(err)) {
+                        // TODO if refunded also reset tx_idx and block id
+                        NodeUtils.log_activity(nodeMem, "top_up", #Err(debug_show err));
+                    };
+                };
+            };
+
+            public func mint_ntc(nodeMem : NodeMem, vid : T.NodeId, vec : T.NodeCoreMem) : async* () {
+                let ?cyclesToMint = nodeMem.internals.cycles_to_send else return;
+                let ?toSourceAccount = core.getSourceAccountIC(vec, 1) else return;
+
+                let balance = Cycles.balance();
+
+                if (balance < cyclesToMint or balance < CYCLES_BALANCE_THRESHOLD) {
+                    NodeUtils.log_activity(nodeMem, "mint_ntc", #Err("Not enough cycles to mint NTC"));
+                    return;
+                };
+
+                await (with cycles = cyclesToMint) NtcMinter.mint(toSourceAccount); // traps if there is an issue
+                NodeUtils.log_activity(nodeMem, "mint_ntc", #Ok());
+                nodeMem.internals.tx_idx := null; // reset transaction index after successful mint
+                nodeMem.internals.cycles_to_send := null; // reset cycles to send after successful mint
+            };
+
         };
     };
 

@@ -17,10 +17,24 @@ export const CMC_CANISTER_ID = Principal.fromText(
   "rkp4c-7iaaa-aaaaa-aaaca-cai"
 );
 
-// This is a test canister ID for development purposes
-// The real NTC Ledger canister ID should be used in production
+// These are test canister IDs for development purposes:
+
 export const NTC_LEDGER_CANISTER_ID = Principal.fromText(
-  "ueyo2-wx777-77776-aaatq-cai"
+  "txyno-ch777-77776-aaaaq-cai"
 );
+
+export const NTC_MINTER_CANISTER_ID = Principal.fromText(
+  "vjwku-z7777-77776-aaaua-cai"
+);
+
+export const NTC_TEST_PYLON_CANISTER_ID = Principal.fromText(
+  "vhuh4-cp777-77776-aaava-cai"
+);
+
+export const ICP_TRANSACTION_FEE = 10_000n;
+
+export const NTC_TRANSACTION_FEE = 500_000n;
+
+export const NTC_TO_CANISTER_FEE = 1000_0000n;
 
 export const NNS_STATE_PATH = resolve(__dirname, "..", "nns_state");

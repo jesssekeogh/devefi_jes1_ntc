@@ -10,4 +10,4 @@ license = ""
 base = "0.13.3"
 
 [dev-dependencies]
-devefi = "2.0.0"
+devefi = "2.0.2"
