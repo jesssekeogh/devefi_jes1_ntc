@@ -117,7 +117,10 @@ shared ({ caller = owner }) actor class NNSTESTPYLON() = this {
         me_can;
     });
 
-    private func proc() { devefi_jes1_ntcmint.run() };
+    private func proc() {
+        devefi_jes1_ntcmint.run();
+        devefi_jes1_ntcredeem.run();
+    };
 
     private func async_proc() : async* () {
         await* devefi_jes1_ntcmint.runAsync();

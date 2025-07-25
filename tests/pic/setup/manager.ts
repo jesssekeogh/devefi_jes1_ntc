@@ -7,6 +7,7 @@ import {
   GetNodeResponse,
   CreateNodeRequest,
   Shared__1,
+  Shared__2,
 } from "./ntc_test_pylon/declarations/ntc_test_pylon.did.js";
 import { _SERVICE as NTCMINTER } from "./ntc_minter/declarations/ntc_minter.did.js";
 import { _SERVICE as NTCLEDGER } from "./ntc_ledger/declarations/ntc_ledger.idl.js";
@@ -42,6 +43,7 @@ export class Manager {
   private readonly ntcLedgerActor: Actor<NTCLEDGER>;
   private readonly ntcMinterActor: Actor<NTCMINTER>;
   private readonly testCanisterId: Principal;
+  private readonly testCanisterId2: Principal;
 
   constructor(
     pic: PocketIc,
@@ -51,7 +53,8 @@ export class Manager {
     icpLedgerActor: Actor<ICPLEDGER>,
     ntcLedgerActor: Actor<NTCLEDGER>,
     ntcMinterActor: Actor<NTCMINTER>,
-    testCanisterId: Principal
+    testCanisterId: Principal,
+    testCanisterId2: Principal
   ) {
     this.pic = pic;
     this.me = me;
@@ -61,6 +64,7 @@ export class Manager {
     this.ntcLedgerActor = ntcLedgerActor;
     this.ntcMinterActor = ntcMinterActor;
     this.testCanisterId = testCanisterId;
+    this.testCanisterId2 = testCanisterId2;
 
     // set identitys as me
     this.ntcTestPylon.setIdentity(this.me);
@@ -90,12 +94,12 @@ export class Manager {
     // setup ICRC
     let icrcFixture = await ICRCLedger(pic, identity.getPrincipal());
 
-    let ntcLedgerFixture = await NtcLedger(pic);
+    let ntcLedgerFixture = await NtcLedger(pic, identity.getPrincipal());
 
     // setup chrono router
     // we are not testing the router here, but we need it to spin up a pylon
     // pass time to allow router to setup slices
-    await Router(pic);
+    const routerFixture = await Router(pic);
     await pic.advanceTime(240 * 60 * 1000);
     await pic.tick(240);
 
@@ -125,11 +129,14 @@ export class Manager {
     // setup vector
     let pylonFixture = await NtcTestPylon(pic);
 
+    let testCanister2 = await pic.createCanister();
+
     // console.log("Pylon canister Id", pylonFixture.canisterId.toString());
     // console.log("Minter canister Id", minterFixture.canisterId.toString());
     // console.log("NTC Ledger canister Id", ntcLedgerFixture.canisterId.toString());
     // console.log("ICRC Ledger canister Id", icrcFixture.canisterId.toString());
     // console.log("Router canister Id", routerFixture.canisterId.toString());
+    // console.log("Test canister Id", testCanister.toString());
 
     return new Manager(
       pic,
@@ -139,7 +146,8 @@ export class Manager {
       icpLedgerActor,
       ntcLedgerFixture.actor,
       minterFixture.actor,
-      testCanister
+      testCanister,
+      testCanister2
     );
   }
 
@@ -169,6 +177,14 @@ export class Manager {
 
   public getNtcLedger(): Actor<NTCLEDGER> {
     return this.ntcLedgerActor;
+  }
+
+  public getTestCanisterId(): Principal {
+    return this.testCanisterId;
+  }
+
+  public getTestCanisterId2(): Principal {
+    return this.testCanisterId2;
   }
 
   public async stopCanister(canisterId: Principal): Promise<void> {
@@ -283,6 +299,7 @@ export class Manager {
           controllers: [{ owner: this.me.getPrincipal(), subaccount: [] }],
           destinations: [
             [{ ic: { owner: this.testCanisterId, subaccount: [] } }],
+            [{ ic: { owner: this.testCanisterId2, subaccount: [] } }],
           ],
           refund: { owner: this.me.getPrincipal(), subaccount: [] },
           ledgers: [{ ic: NTC_LEDGER_CANISTER_ID }],
@@ -296,7 +313,12 @@ export class Manager {
         };
 
         let creq: CreateRequest = {
-          devefi_jes1_ntcredeem: {},
+          devefi_jes1_ntcredeem: {
+            variables: {
+              split: [50n, 50n],
+              names: ["Canister 1", "Canister 2"],
+            },
+          },
         };
 
         return [req, creq];
@@ -346,6 +368,23 @@ export class Manager {
 
   public async sendIcrc(to: Account, amount: bigint): Promise<TransferResult> {
     let txresp = await this.icrcActor.icrc1_transfer({
+      from_subaccount: [],
+      to: to,
+      amount: amount,
+      fee: [],
+      memo: [],
+      created_at_time: [],
+    });
+
+    if (!("Ok" in txresp)) {
+      throw new Error("Transaction failed");
+    }
+
+    return txresp;
+  }
+
+  public async sendNtc(to: Account, amount: bigint): Promise<TransferResult> {
+    let txresp = await this.ntcLedgerActor.icrc1_transfer({
       from_subaccount: [],
       to: to,
       amount: amount,
@@ -458,6 +497,18 @@ export class Manager {
     }
 
     throw new Error("Invalid custom data: 'devefi_jes1_ntcmint' expected");
+  }
+
+  public getRedeemNodeCustom(node: NodeShared): Shared__2 {
+    if (!node || !node.custom) {
+      throw new Error("Invalid node or no custom data found");
+    }
+
+    if ("devefi_jes1_ntcredeem" in node.custom[0]) {
+      return node.custom[0].devefi_jes1_ntcredeem;
+    }
+
+    throw new Error("Invalid custom data: 'devefi_jes1_ntcredeem' expected");
   }
 
   public async pylonDebug(): Promise<void> {

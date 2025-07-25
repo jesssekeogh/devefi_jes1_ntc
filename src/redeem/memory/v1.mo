@@ -11,9 +11,11 @@ module {
         main = Map.new<Nat32, NodeMem>();
     });
 
-    // placeholders for if we want to add more adavnced async functionality later
     public type NodeMem = {
-        internals : {};
+        variables : {
+            var split : [Nat];
+            var names : [Text];
+        };
     };
 
 };

@@ -25,6 +25,5 @@ module Utils = {
         let size = can.size();
         let pad_start = 32 - size - 1 : Nat;
         Blob.fromArray(Iter.toArray(IterTools.flattenArray<Nat8>([Array.tabulate<Nat8>(pad_start, func _ = 0), can, [Nat8.fromNat(size)]])));
-
     };
 };

@@ -1,12 +1,22 @@
-
 module {
 
-    public type CreateRequest = {};
+    public type CreateRequest = {
+        variables : {
+            split : [Nat];
+            names : [Text];
+        };
+    };
 
-    public type ModifyRequest = {};
+    public type ModifyRequest = {
+        split : [Nat];
+        names : [Text];
+    };
 
     public type Shared = {
-        internals : {};
+        variables : {
+            split : [Nat];
+            names : [Text];
+        };
     };
 
 };

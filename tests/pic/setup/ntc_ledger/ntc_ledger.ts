@@ -12,7 +12,7 @@ import { NTC_MINTER_CANISTER_ID } from "../constants";
 
 const WASM_PATH = resolve(__dirname, "../ntc_ledger/ntc_ledger.wasm");
 
-export async function NtcLedger(pic: PocketIc) {
+export async function NtcLedger(pic: PocketIc, me: Principal) {
   let ledger_args: LedgerArg = {
     Init: {
       minting_account: {
@@ -27,8 +27,8 @@ export async function NtcLedger(pic: PocketIc) {
       metadata: [],
       initial_balances: [
         [
-          { owner: Principal.fromText("aaaaa-aa"), subaccount: [] },
-          100000000000n,
+          { owner: me, subaccount: [] },
+          1000_0000_0000n,
         ],
       ], // just to get a block
       archive_options: {
