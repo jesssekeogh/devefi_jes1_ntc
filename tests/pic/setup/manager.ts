@@ -21,7 +21,12 @@ import {
 } from "./nns/ledger";
 import { Actor, PocketIc, createIdentity, SubnetStateType } from "@dfinity/pic";
 import { Principal } from "@dfinity/principal";
-import { ICP_LEDGER_CANISTER_ID, NTC_LEDGER_CANISTER_ID } from "./constants.ts";
+import {
+  CMC_CANISTER_ID,
+  ICP_LEDGER_CANISTER_ID,
+  NNS_ROOT_CANISTER_ID,
+  NTC_LEDGER_CANISTER_ID,
+} from "./constants.ts";
 import { NtcTestPylon, ICRCLedger, NtcMinter, NtcLedger } from "./index";
 import { minterIdentity } from "./nns/identity.ts";
 import { NNS_STATE_PATH } from "./constants.ts";
@@ -120,7 +125,7 @@ export class Manager {
     // setup vector
     let pylonFixture = await NtcTestPylon(pic);
 
-    console.log("Pylon canister Id", pylonFixture.canisterId.toString());
+    // console.log("Pylon canister Id", pylonFixture.canisterId.toString());
     // console.log("Minter canister Id", minterFixture.canisterId.toString());
     // console.log("NTC Ledger canister Id", ntcLedgerFixture.canisterId.toString());
     // console.log("ICRC Ledger canister Id", icrcFixture.canisterId.toString());
@@ -164,6 +169,28 @@ export class Manager {
 
   public getNtcLedger(): Actor<NTCLEDGER> {
     return this.ntcLedgerActor;
+  }
+
+  public async stopCanister(canisterId: Principal): Promise<void> {
+    return await this.pic.stopCanister({ canisterId });
+  }
+
+  public async startCanister(canisterId: Principal): Promise<void> {
+    return await this.pic.startCanister({ canisterId });
+  }
+
+  public async stopCmcCanister(): Promise<void> {
+    this.pic.stopCanister({
+      canisterId: CMC_CANISTER_ID,
+      sender: NNS_ROOT_CANISTER_ID,
+    });
+  }
+
+  public async startCmcCanister(): Promise<void> {
+    this.pic.startCanister({
+      canisterId: CMC_CANISTER_ID,
+      sender: NNS_ROOT_CANISTER_ID,
+    });
   }
 
   public async getCyclesBalance(canisterId: Principal): Promise<number> {

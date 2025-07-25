@@ -23,6 +23,7 @@ module {
     public let ID = "devefi_jes1_ntcredeem";
 
     // TOOD make it a splitter and send to multiple canisters, each needs atleast 1 NTC to work though
+    // TODO allow user to name the canister and set the amount to topup by
 
     public class Mod({
         xmem : MU.MemShell<M.Mem>;

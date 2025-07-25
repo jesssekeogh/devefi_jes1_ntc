@@ -283,16 +283,26 @@ module {
         module NtcMintingActions {
             public func top_up(nodeMem : NodeMem, vid : T.NodeId) : async* () {
                 let ?blockIdx = nodeMem.internals.block_idx else return;
+                if (Option.isSome(nodeMem.internals.cycles_to_send)) return; // already topped up
 
                 switch (await CmcMinter.notify_top_up({ block_index = Nat64.fromNat(blockIdx); canister_id = core.getThisCan() })) {
                     case (#Ok(cycles)) {
-                        nodeMem.internals.block_idx := null; // reset block index after successful top-up
                         nodeMem.internals.cycles_to_send := ?cycles;
                         NodeUtils.log_activity(nodeMem, "top_up", #Ok());
                     };
                     case (#Err(err)) {
-                        // TODO if refunded also reset tx_idx and block id
-                        NodeUtils.log_activity(nodeMem, "top_up", #Err(debug_show err));
+                        switch (err) {
+                            case (#Refunded(_)) {
+                                // If refunded - for whatever reason, reset the transaction index and block index
+                                nodeMem.internals.block_idx := null;
+                                nodeMem.internals.tx_idx := null;
+                                NodeUtils.log_activity(nodeMem, "top_up", #Err(debug_show err));
+                            };
+                            case (_) {
+                                // For any other error, we log it and allow the vector to retry
+                                NodeUtils.log_activity(nodeMem, "top_up", #Err(debug_show err));
+                            };
+                        };
                     };
                 };
             };
@@ -303,15 +313,16 @@ module {
 
                 let balance = Cycles.balance();
 
-                if (balance < cyclesToMint or balance < CYCLES_BALANCE_THRESHOLD) {
+                if (balance < cyclesToMint + CYCLES_BALANCE_THRESHOLD) {
                     NodeUtils.log_activity(nodeMem, "mint_ntc", #Err("Not enough cycles to mint NTC"));
                     return;
                 };
 
                 await (with cycles = cyclesToMint) NtcMinter.mint(toSourceAccount); // traps if there is an issue
                 NodeUtils.log_activity(nodeMem, "mint_ntc", #Ok());
-                nodeMem.internals.tx_idx := null; // reset transaction index after successful mint
-                nodeMem.internals.cycles_to_send := null; // reset cycles to send after successful mint
+                nodeMem.internals.block_idx := null;
+                nodeMem.internals.tx_idx := null;
+                nodeMem.internals.cycles_to_send := null;
             };
 
         };
