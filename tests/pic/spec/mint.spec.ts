@@ -2,6 +2,7 @@ import {
   ICP_TRANSACTION_FEE,
   NTC_MINTER_CANISTER_ID,
   NTC_TEST_PYLON_CANISTER_ID,
+  NTC_TRANSACTION_FEE,
 } from "../setup/constants.ts";
 import { Manager } from "../setup/manager.ts";
 import { NodeShared } from "../setup/ntc_test_pylon/declarations/ntc_test_pylon.did";
@@ -287,7 +288,7 @@ describe("Mint", () => {
 
   it("should retry failed top-up operations when CMC service is temporarily unavailable", async () => {
     expect(node.sources[0].balance).toBe(0n);
-    
+
     // Get initial balance
     let beforeBalance = await manager.getMyBalances();
 
@@ -303,18 +304,20 @@ describe("Mint", () => {
 
     // Should process the ICP but fail on async_cycle operation
     expect(node.sources[0].balance).toBe(0n);
-    
+
     // Check that we have an error in the recent log entries (log max is 10)
     const errors = mem.log.filter((entry) => "Err" in entry);
     expect(errors.length).toBeGreaterThan(0);
-    
+
     // Should have a async_cycle error
-    const asyncCycleError = errors.find((entry) => entry.Err.operation === "async_cycle");
+    const asyncCycleError = errors.find(
+      (entry) => entry.Err.operation === "async_cycle"
+    );
     expect(asyncCycleError).toBeDefined();
 
     // Start the CMC canister back up
     await manager.startCmcCanister();
-    
+
     // Wait for retry mechanism to kick in
     await manager.advanceBlocksAndTimeMinutes(5);
 
@@ -323,13 +326,13 @@ describe("Mint", () => {
 
     // Should now complete successfully
     expect(mem.internals.updating).toHaveProperty("Done");
-    
+
     // Check the latest entries in the log for successful operations
     const latestEntries = mem.log.slice(-3); // Get last 3 entries
     const latestSuccessfulOps = latestEntries
       .filter((entry) => "Ok" in entry)
       .map((entry) => entry.Ok.operation);
-    
+
     expect(latestSuccessfulOps).toContain("top_up");
     expect(latestSuccessfulOps).toContain("mint_ntc");
 
@@ -340,7 +343,7 @@ describe("Mint", () => {
 
   it("should retry failed minting operations when NTC minter service is temporarily unavailable", async () => {
     expect(node.sources[0].balance).toBe(0n);
-    
+
     // Get initial balance
     let beforeBalance = await manager.getMyBalances();
 
@@ -356,22 +359,26 @@ describe("Mint", () => {
 
     // Should process the ICP and succeed with top_up but fail on mint_ntc operation
     expect(node.sources[0].balance).toBe(0n);
-    
+
     // Check the log entries (log max is 10)
     const errors = mem.log.filter((entry) => "Err" in entry);
     const successes = mem.log.filter((entry) => "Ok" in entry);
 
     // Should have successful top_up
-    const topUpSuccess = successes.find((entry) => entry.Ok.operation === "top_up");
+    const topUpSuccess = successes.find(
+      (entry) => entry.Ok.operation === "top_up"
+    );
     expect(topUpSuccess).toBeDefined();
-    
+
     // Should have an error for async_cycle operation (mint_ntc failure)
-    const asyncCycleError = errors.find((entry) => entry.Err.operation === "async_cycle");
+    const asyncCycleError = errors.find(
+      (entry) => entry.Err.operation === "async_cycle"
+    );
     expect(asyncCycleError).toBeDefined();
 
     // Start the NTC minter canister back up
     await manager.startCanister(NTC_MINTER_CANISTER_ID);
-    
+
     // Wait for retry mechanism to kick in
     await manager.advanceBlocksAndTimeMinutes(5);
 
@@ -380,16 +387,16 @@ describe("Mint", () => {
 
     // Should now complete successfully
     expect(mem.internals.updating).toHaveProperty("Done");
-    
+
     // Check the latest entries in the log for successful operations
     const latestEntries = mem.log.slice(-3); // Get last 3 entries
     const latestSuccessfulOps = latestEntries
       .filter((entry) => "Ok" in entry)
       .map((entry) => entry.Ok.operation);
-    
+
     expect(latestSuccessfulOps).toContain("top_up");
     expect(latestSuccessfulOps).toContain("mint_ntc");
-    
+
     // Verify NTC tokens were actually minted
     let afterBalance = await manager.getMyBalances();
     expect(afterBalance.ntc_tokens).toBeGreaterThan(beforeBalance.ntc_tokens);
@@ -407,14 +414,19 @@ describe("Mint", () => {
 
     // Check that the latest operations include both top_up and mint_ntc close together in time
     const latestOps = mem.log.slice(-2).filter((entry) => "Ok" in entry); // Get last 2 entries only
-    const normalTopUp = latestOps.find((entry) => entry.Ok.operation === "top_up");
-    const normalMintNtc = latestOps.find((entry) => entry.Ok.operation === "mint_ntc");
+    const normalTopUp = latestOps.find(
+      (entry) => entry.Ok.operation === "top_up"
+    );
+    const normalMintNtc = latestOps.find(
+      (entry) => entry.Ok.operation === "mint_ntc"
+    );
     expect(normalTopUp).toBeDefined();
     expect(normalMintNtc).toBeDefined();
 
     // Verify they are close in time (less than 3 minutes = 180_000_000_000 nanoseconds)
     const threeMinutesInNanos = 3n * 60n * 1_000_000_000n;
-    const timeDifference = normalMintNtc!.Ok.timestamp - normalTopUp!.Ok.timestamp;
+    const timeDifference =
+      normalMintNtc!.Ok.timestamp - normalTopUp!.Ok.timestamp;
     expect(timeDifference).toBeLessThan(threeMinutesInNanos);
 
     // Now test the retry scenario - stop NTC minter to cause mint_ntc to fail
@@ -430,24 +442,30 @@ describe("Mint", () => {
     // Should have successful top_up but failed async_cycle (mint_ntc attempt)
     // Look for recent top_up and async_cycle error in latest entries
     const recentEntries = mem.log.slice(-3); // Get last 3 entries only to capture recent activity
-    const retryTopUp = recentEntries.find((entry) => "Ok" in entry && entry.Ok.operation === "top_up");
-    const retryError = recentEntries.find((entry) => "Err" in entry && entry.Err.operation === "async_cycle");
-    
+    const retryTopUp = recentEntries.find(
+      (entry) => "Ok" in entry && entry.Ok.operation === "top_up"
+    );
+    const retryError = recentEntries.find(
+      (entry) => "Err" in entry && entry.Err.operation === "async_cycle"
+    );
+
     expect(retryTopUp).toBeDefined();
     expect(retryError).toBeDefined();
 
     // The error should happen reasonably soon after top_up (within reasonable async processing time)
     // But the important timing constraint is that retry happens AFTER 3 minutes from the error
-    const retryTimeDifference = ("Err" in retryError! ? retryError.Err.timestamp : 0n) - 
-                               ("Ok" in retryTopUp! ? retryTopUp.Ok.timestamp : 0n);
+    const retryTimeDifference =
+      ("Err" in retryError! ? retryError.Err.timestamp : 0n) -
+      ("Ok" in retryTopUp! ? retryTopUp.Ok.timestamp : 0n);
     expect(retryTimeDifference).toBeLessThan(threeMinutesInNanos); // Error should happen reasonably soon after top_up
 
     // Store the retry error timestamp for later comparison
-    const retryErrorTimestamp = ("Err" in retryError! ? retryError.Err.timestamp : 0n);
+    const retryErrorTimestamp =
+      "Err" in retryError! ? retryError.Err.timestamp : 0n;
 
     // Start the NTC minter canister back up
     await manager.startCanister(NTC_MINTER_CANISTER_ID);
-    
+
     // Wait for retry mechanism to kick in (should retry mint_ntc without calling top_up again)
     await manager.advanceBlocksAndTimeMinutes(5);
 
@@ -459,23 +477,27 @@ describe("Mint", () => {
 
     // Check the most recent entries for the retry operations
     const finalEntries = mem.log.slice(-3); // Get last 3 entries
-    
+
     // Should have a successful mint_ntc in recent entries (the retry)
-    const retryMintNtc = finalEntries.find((entry) => "Ok" in entry && entry.Ok.operation === "mint_ntc");
+    const retryMintNtc = finalEntries.find(
+      (entry) => "Ok" in entry && entry.Ok.operation === "mint_ntc"
+    );
     expect(retryMintNtc).toBeDefined();
 
     // CRITICAL: Verify NO duplicate top_up in recent entries during retry phase
     // After the retry, we should NOT see another top_up call - only the mint_ntc retry
-    const duplicateTopUp = finalEntries.find((entry) => 
-      "Ok" in entry && 
-      entry.Ok.operation === "top_up" && 
-      entry.Ok.timestamp > retryErrorTimestamp
+    const duplicateTopUp = finalEntries.find(
+      (entry) =>
+        "Ok" in entry &&
+        entry.Ok.operation === "top_up" &&
+        entry.Ok.timestamp > retryErrorTimestamp
     );
     expect(duplicateTopUp).toBeUndefined(); // Should NOT find a top_up after the error
 
     // CRITICAL: Verify the retry mint_ntc happened AFTER the 3-minute timeout from the error
     // This ensures the retry mechanism respects the 3-minute cooldown period
-    const retryMintTimestamp = ("Ok" in retryMintNtc! ? retryMintNtc.Ok.timestamp : 0n);
+    const retryMintTimestamp =
+      "Ok" in retryMintNtc! ? retryMintNtc.Ok.timestamp : 0n;
     const retryMintDelay = retryMintTimestamp - retryErrorTimestamp;
     expect(retryMintDelay).toBeGreaterThanOrEqual(threeMinutesInNanos);
 
@@ -484,11 +506,147 @@ describe("Mint", () => {
     expect(finalBalance.ntc_tokens).toBeGreaterThan(0n);
   });
 
-  // it.skip("should apply correct billing fee (0.05 NTC)", async () => {
-  //   // TODO: Test billing.transaction_fee flat_fee_multiplier(500)
-  // });
+  it("should handle ICP deposits during active processing without corruption", async () => {
+    expect(node.sources[0].balance).toBe(0n);
 
-  // it.skip("should collect billing fees to author account", async () => {
-  //   // TODO: Test 0.05 NTC billing fees are transferred to author_account
-  // });
+    let beforeBalance = await manager.getMyBalances();
+
+    // Stop the NTC minter to create a controlled processing state
+    await manager.stopCanister(NTC_MINTER_CANISTER_ID);
+
+    // Send first ICP amount to start processing
+    await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 3_0000_0000n);
+
+    // Advance time to process the ICP (top_up should succeed, mint_ntc should fail)
+    await manager.advanceBlocksAndTimeMinutes(5);
+
+    node = await manager.getNode(node.id);
+    let mem = manager.getMintNodeCustom(node);
+
+    // Should have consumed the ICP and started processing
+    expect(node.sources[0].balance).toBe(0n);
+    expect(mem.internals.cycles_to_send.length).toBeGreaterThan(0);
+    expect(mem.internals.block_idx.length).toBeGreaterThan(0);
+    expect(mem.internals.tx_idx.length).toBeGreaterThan(0);
+
+    // Now send more ICP while the system is processing the first transaction
+    await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 2_0000_0000n);
+
+    // Advance a bit more time
+    await manager.advanceBlocksAndTimeMinutes(3);
+
+    node = await manager.getNode(node.id);
+    mem = manager.getMintNodeCustom(node);
+
+    // The new ICP should remain in the source balance (not processed due to active processing)
+    expect(node.sources[0].balance).toBe(2_0000_0000n - ICP_TRANSACTION_FEE);
+
+    // Start the NTC minter to complete the first transaction
+    await manager.startCanister(NTC_MINTER_CANISTER_ID);
+    // Complete the first processing cycle
+    await manager.advanceBlocksAndTimeMinutes(6);
+
+    node = await manager.getNode(node.id);
+    mem = manager.getMintNodeCustom(node);
+
+    // Queued ICP should now be processed
+    expect(node.sources[0].balance).toBe(0n);
+
+    // Verify final state is clean
+    expect(mem.internals.cycles_to_send).toEqual([]);
+    expect(mem.internals.block_idx).toEqual([]);
+    expect(mem.internals.tx_idx).toEqual([]);
+
+    // Verify NTC tokens were minted for both transactions
+    let afterBalance = await manager.getMyBalances();
+    expect(afterBalance.ntc_tokens).toBeGreaterThan(beforeBalance.ntc_tokens);
+  });
+
+  it("should apply correct billing fee (0.1 NTC)", async () => {
+    expect(node.sources[0].balance).toBe(0n);
+    let beforeBalance = await manager.getMyBalances();
+
+    // Stop the NTC minter canister so we can grab the minted cycles
+    await manager.stopCanister(NTC_MINTER_CANISTER_ID);
+
+    // Send ICP to trigger minting process
+    await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 2_0000_0000n);
+    await manager.advanceBlocksAndTimeMinutes(5);
+
+    node = await manager.getNode(node.id);
+    let mem = manager.getMintNodeCustom(node);
+
+    // convert to 8 decimals
+    let cyclesToConvert = mem.internals.cycles_to_send[0] / 1_00_00n;
+
+    // start the minter again to process that amount
+    await manager.startCanister(NTC_MINTER_CANISTER_ID);
+
+    await manager.advanceBlocksAndTimeMinutes(5);
+    node = await manager.getNode(node.id);
+    mem = manager.getMintNodeCustom(node);
+
+    let afterBalance = await manager.getMyBalances();
+
+    expect(node.sources[0].balance).toBe(0n);
+    expect(afterBalance.ntc_tokens).toBeGreaterThan(beforeBalance.ntc_tokens);
+
+    // Calculate expected NTC after billing fee
+    const billingFee = 10000000n; // 0.1 NTC in 8 decimal places
+    const expectedNtcAfterFee = cyclesToConvert - billingFee;
+    const actualNtcReceived =
+      afterBalance.ntc_tokens - beforeBalance.ntc_tokens;
+
+    expect(actualNtcReceived).toBe(
+      expectedNtcAfterFee - NTC_TRANSACTION_FEE * 3n // 3x transaction fees
+    );
+
+    expect(mem.internals.cycles_to_send).toEqual([]);
+    expect(mem.internals.block_idx).toEqual([]);
+    expect(mem.internals.updating).toHaveProperty("Done");
+    expect(mem.internals.tx_idx).toEqual([]);
+  });
+
+  it("should collect billing fees to billing account", async () => {
+    expect(node.sources[0].balance).toBe(0n);
+
+    // Get initial billing account balance
+    let beforeBillingBalances = await manager.getBillingBalances();
+
+    // Send ICP to trigger minting process
+    await manager.sendIcp(manager.getNodeSourceAccount(node, 0), 2_0000_0000n);
+    await manager.advanceBlocksAndTimeMinutes(5);
+
+    node = await manager.getNode(node.id);
+    let mem = manager.getMintNodeCustom(node);
+
+    // Should process the ICP successfully
+    expect(node.sources[0].balance).toBe(0n);
+
+    await manager.advanceBlocksAndTimeMinutes(5);
+
+    // Advance time by 6 hours to allow billing fees to be collected
+    await manager.advanceTime(6 * 60 * 60 * 1000); // 6 hours in milliseconds
+    await manager.advanceBlocks(360); // Advance blocks to trigger any scheduled processes
+
+    await manager.advanceBlocksAndTimeMinutes(3);
+
+    node = await manager.getNode(node.id);
+    mem = manager.getMintNodeCustom(node);
+
+    // Get final author account balance after advancing time
+    let afterBillingBalances = await manager.getBillingBalances();
+
+    // Verify that the author account balance has increased (billing fees collected)
+    // Note: The 0.1 NTC billing fee is split among platform, pylon, author, and affiliate
+    // so the author won't receive the full amount, just check any increase
+    expect(afterBillingBalances.ntc_tokens).toBeGreaterThan(
+      beforeBillingBalances.ntc_tokens
+    );
+
+    expect(mem.internals.cycles_to_send).toEqual([]);
+    expect(mem.internals.block_idx).toEqual([]);
+    expect(mem.internals.updating).toHaveProperty("Done");
+    expect(mem.internals.tx_idx).toEqual([]);
+  });
 });
