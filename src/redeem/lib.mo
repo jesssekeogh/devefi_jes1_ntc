@@ -36,13 +36,13 @@ module {
 
         // PRODUCTION ENVIRONMENT (uncomment for production deployment):
 
-        // let NtcLedger = Principal.fromText("7dx3o-7iaaa-aaaal-qsrdq-cai");
-        // let NtcMinter = Principal.fromText("7ew52-sqaaa-aaaal-qsrda-cai");
+        let NtcLedger = Principal.fromText("7dx3o-7iaaa-aaaal-qsrdq-cai");
+        let NtcMinter = Principal.fromText("7ew52-sqaaa-aaaal-qsrda-cai");
 
         // TESTING ENVIRONMENT (comment out for production):
 
-        let NtcLedger = Principal.fromText("txyno-ch777-77776-aaaaq-cai");
-        let NtcMinter = Principal.fromText("vjwku-z7777-77776-aaaua-cai");
+        // let NtcLedger = Principal.fromText("txyno-ch777-77776-aaaaq-cai");
+        // let NtcMinter = Principal.fromText("vjwku-z7777-77776-aaaua-cai");
 
         public func meta() : T.Meta {
             {

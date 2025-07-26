@@ -46,13 +46,13 @@ module {
 
         // PRODUCTION ENVIRONMENT (uncomment for production deployment):
 
-        // let NtcLedger = Principal.fromText("7dx3o-7iaaa-aaaal-qsrdq-cai");
-        // let NtcMinter = actor ("7ew52-sqaaa-aaaal-qsrda-cai") : NtcMinterInterface.Self;
+        let NtcLedger = Principal.fromText("7dx3o-7iaaa-aaaal-qsrdq-cai");
+        let NtcMinter = actor ("7ew52-sqaaa-aaaal-qsrda-cai") : NtcMinterInterface.Self;
 
         // TESTING ENVIRONMENT (comment out for production):
 
-        let NtcLedger = Principal.fromText("txyno-ch777-77776-aaaaq-cai");
-        let NtcMinter = actor ("vjwku-z7777-77776-aaaua-cai") : NtcMinterInterface.Self;
+        // let NtcLedger = Principal.fromText("txyno-ch777-77776-aaaaq-cai");
+        // let NtcMinter = actor ("vjwku-z7777-77776-aaaua-cai") : NtcMinterInterface.Self;
 
         let MINIMUM_MINT : Nat = 100_000_000; // 1 ICP
 
